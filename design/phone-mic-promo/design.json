@@ -1,0 +1,13 @@
+{
+  "title": "phone-mic promo page",
+  "brief": "Promotional page for phone-mic, a Linux tool that turns an Android phone into a PipeWire microphone. Terminal interface language: boxed frame, monospace type, big wordmark, scattered pixel stars, key-hint status bar. Default palette is warm amber (from tui/phone_mic_tui.py); all twelve palettes are switchable from the page itself.",
+  "artboards": [
+    {
+      "file": "01-warm-terminal.html",
+      "title": "Warm terminal",
+      "tradeoff": "Hero-first and emotional, closest to the reference image; pushes the install command below the fold. This board is generated from the built site by site/scripts/snapshot-design.ts, so it cannot drift from the page that ships.",
+      "width": 1440,
+      "height": 900
+    }
+  ]
+}

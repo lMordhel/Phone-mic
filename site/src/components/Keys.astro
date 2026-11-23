@@ -1,0 +1,34 @@
+---
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<section class="section" id="keys">
+  <div class="sec-head">
+    <h2>{t.keys.heading}</h2>
+    <p>{t.keys.note}</p>
+  </div>
+  <p class="sec-sub">{t.keys.sub}</p>
+  <ul class="keys">
+    {
+      t.keys.items.map((key) => (
+        <li class="key">
+          <span aria-hidden="true">
+            {key.kbd.map((k) => (
+              <kbd>{k}</kbd>
+            ))}
+          </span>
+          <span class="sr-only">{key.kbd.join(' ')}</span>
+          <b>{key.action}</b>
+          {key.note}
+        </li>
+      ))
+    }
+  </ul>
+</section>

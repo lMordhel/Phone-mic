@@ -1,0 +1,48 @@
+---
+/**
+ * Disclosure section. The page sells a tool that opens a phone microphone and
+ * pairs adb over the network, so the limits are stated before the install
+ * command, not buried after it.
+ */
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<section class="section" id="security">
+  <div class="sec-head">
+    <h2>{t.security.heading}</h2>
+    <p>{t.security.note}</p>
+  </div>
+  <p class="sec-sub">{t.security.sub}</p>
+
+  <div class="notice" role="note">
+    <span class="tag" aria-hidden="true">[ ! ]</span>
+    <p>
+      <strong>{t.security.noticeStrong}</strong> {t.security.noticeRest}
+    </p>
+  </div>
+
+  <div class="cards" style="margin-top:18px">
+    {
+      t.security.cards.map((limit) => (
+        <article class="card">
+          <h3>
+            <span class="mark-warn" aria-hidden="true">▲</span> {limit.title}
+          </h3>
+          <p>{limit.body}</p>
+        </article>
+      ))
+    }
+  </div>
+
+  <p class="sec-sub" style="margin-top:22px;margin-bottom:0">
+    {t.security.closingBefore}<a href={t.security.closingHref}>{t.security.closingLink}</a
+    >{t.security.closingAfter}
+  </p>
+</section>

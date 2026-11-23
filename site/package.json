@@ -1,0 +1,18 @@
+{
+  "name": "phone-mic-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Promotional page for phone-mic, styled as a terminal interface",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "astro": "^7.4.13"
+  }
+}

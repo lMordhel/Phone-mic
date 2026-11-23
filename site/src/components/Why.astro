@@ -1,0 +1,31 @@
+---
+// The four constraints the project actually keeps, phrased as the user's gain.
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<section class="section" id="why">
+  <div class="sec-head">
+    <h2>{t.why.heading}</h2>
+    <p>{t.why.note}</p>
+  </div>
+  <p class="sec-sub">{t.why.sub}</p>
+  <div class="cards">
+    {
+      t.why.cards.map((card) => (
+        <article class="card">
+          <h3>
+            <span class="mark" aria-hidden="true">▸</span> {card.title}
+          </h3>
+          <p>{card.body}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>

@@ -1,0 +1,54 @@
+---
+import { DEFAULT_THEME, FAMILY_ORDER, THEMES, toCss } from '../data/themes.ts';
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+
+const groups = FAMILY_ORDER.map((family) => ({
+  family,
+  themes: THEMES.filter((theme) => theme.family === family),
+}));
+---
+
+<section class="section" id="themes">
+  <div class="sec-head">
+    <h2>{t.themes.heading}</h2>
+    <p>{t.themes.note}</p>
+  </div>
+  <p class="sec-sub">
+    {t.themes.sub.map((seg) => (seg.code ? <code>{seg.t}</code> : seg.t))}
+  </p>
+
+  {
+    groups.map((group) => (
+      <>
+        <p class="theme-family">{group.family}</p>
+        <ul class="theme-grid" aria-label={t.themes.ariaLabel(group.family)}>
+          {group.themes.map((theme) => (
+            <li>
+              <button
+                type="button"
+                class="theme-btn"
+                data-theme-name={theme.name}
+                aria-pressed={theme.name === DEFAULT_THEME ? 'true' : 'false'}
+              >
+                <span class="theme-swatch" aria-hidden="true">
+                  <span style={`background:${toCss(theme.roles.bg)}`} />
+                  <span style={`background:${toCss(theme.roles.accent)}`} />
+                </span>
+                {theme.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </>
+    ))
+  }
+
+  <p class="sr-only" aria-live="polite" id="theme-live" data-template={t.themes.appliedTemplate}></p>
+</section>

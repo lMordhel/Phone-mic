@@ -1,0 +1,100 @@
+---
+/**
+ * A faithful replica of the terminal panel (`phone-mic`), drawn with box-drawing
+ * characters. Rows are measured and padded from their plain text so the frame
+ * stays aligned no matter how a row is coloured.
+ *
+ * The rows below are real tool output: they are not translated, only the prose
+ * around the frame is.
+ */
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+
+type Seg = { t: string; c?: string };
+type Row = { l: Seg[]; r?: Seg[] } | 'sep' | 'blank';
+
+const W = 60; // usable width inside the frame
+
+const esc = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const plain = (segs: Seg[]): string => segs.map((seg) => seg.t).join('');
+const paint = (segs: Seg[]): string =>
+  segs.map((seg) => (seg.c ? `<span class="${seg.c}">${esc(seg.t)}</span>` : esc(seg.t))).join('');
+
+const rows: Row[] = [
+  { l: [{ t: '◉ PHONE-MIC', c: 'ok' }], r: [{ t: 'PIPEWIRE · ADB', c: 'c' }] },
+  { l: [{ t: 'phone as a microphone', c: 'c' }] },
+  'sep',
+  { l: [{ t: 'PHONE LINK', c: 'c' }] },
+  {
+    l: [
+      { t: '● CONNECTED', c: 'ok' },
+      { t: '   Redmi Note 13 · Wi-Fi · 192.168.100.57' },
+    ],
+  },
+  { l: [{ t: 'buffer 50 ms · routing ' }, { t: 'ok', c: 'ok' }] },
+  'sep',
+  { l: [{ t: 'INPUT MONITOR', c: 'c' }] },
+  { l: [{ t: '▁▃▅▇█▆▅▃▁▂▄▆▇█▅▃▂▁▃▅▆▅▃▂▁▂▄▅▆▇▆▅▄▃▂▁', c: 'ok' }] },
+  {
+    l: [
+      { t: 'INPUT LEVEL  ' },
+      { t: '████████████████████', c: 'ok' },
+      { t: '░░░░', c: 'c' },
+      { t: '  -10.5 dB' },
+    ],
+  },
+  { l: [{ t: 'RMS -20.7 dB   buffer 50 ms', c: 'c' }] },
+  'sep',
+  { l: [{ t: 'VIRTUAL MICROPHONE', c: 'c' }] },
+  { l: [{ t: '● Phone-Mic  PipeWire remap source' }], r: [{ t: 'ACTIVE', c: 'ok' }] },
+  { l: [{ t: 'GAIN    ' }, { t: '━━━━━━━━━━━━━━━━●', c: 'ok' }, { t: ' 100%' }] },
+  { l: [{ t: 'VOLUME  ' }, { t: '━━━━━━━━━━━━━━━━●', c: 'ok' }, { t: ' 100%' }] },
+  'blank',
+  'sep',
+  { l: [{ t: '[C] Connect  [X] Stop  [M] Mute  [T] Theme  [Q] Quit' }] },
+  { l: [{ t: '[Tab] gain/volume  [←→] ±5%   ·   focus gain', c: 'c' }] },
+];
+
+const body = rows
+  .map((row) => {
+    if (row === 'sep') return '├' + '─'.repeat(W + 2) + '┤';
+    if (row === 'blank') return '│' + ' '.repeat(W + 2) + '│';
+    const leftLen = plain(row.l).length;
+    const rightLen = row.r ? plain(row.r).length : 0;
+    const gap = ' '.repeat(Math.max(1, W - leftLen - rightLen));
+    return '│ ' + paint(row.l) + gap + (row.r ? paint(row.r) : '') + ' │';
+  })
+  .join('\n');
+
+const panel = ['╭' + '─'.repeat(W + 2) + '╮', body, '╰' + '─'.repeat(W + 2) + '╯'].join('\n');
+---
+
+<section class="section" id="panel">
+  <div class="sec-head">
+    <h2>{t.panel.heading}</h2>
+    <p>{t.panel.note}</p>
+  </div>
+  <p class="sec-sub">
+    {t.panel.sub.map((seg) => (seg.code ? <code>{seg.t}</code> : seg.t))}
+  </p>
+
+  <figure class="term" style="margin:0">
+    <div class="term-head">
+      <span class="term-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+      phone-mic
+    </div>
+    <pre class="term-body" aria-hidden="true"><code set:html={panel}></code></pre>
+    <figcaption class="sr-only">{t.panel.caption}</figcaption>
+    <div class="term-foot">
+      <span>{t.panel.footLeft}</span>
+      <span>{t.panel.footRight}</span>
+    </div>
+  </figure>
+</section>
