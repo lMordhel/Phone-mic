@@ -1,0 +1,28 @@
+---
+import Base from '../../layouts/Base.astro';
+import Hero from '../../components/Hero.astro';
+import Install from '../../components/Install.astro';
+import Keys from '../../components/Keys.astro';
+import Panel from '../../components/Panel.astro';
+import StatusBar from '../../components/StatusBar.astro';
+import Themes from '../../components/Themes.astro';
+import TopBar from '../../components/TopBar.astro';
+import Why from '../../components/Why.astro';
+import { copy } from '../../i18n/copy.ts';
+
+const lang = 'es';
+const t = copy[lang];
+---
+
+<Base lang={lang} title={t.meta.title} description={t.meta.description}>
+  <TopBar lang={lang} />
+  <main id="main">
+    <Hero lang={lang} />
+    <Why lang={lang} />
+    <Panel lang={lang} />
+    <Keys lang={lang} />
+    <Themes lang={lang} />
+    <Install lang={lang} />
+  </main>
+  <StatusBar lang={lang} />
+</Base>

@@ -1,5 +1,6 @@
 ---
 import { copy, type Lang } from '../i18n/copy.ts';
+import { withBase } from '../lib/paths.ts';
 
 interface Props {
   lang: Lang;
@@ -18,6 +19,9 @@ const t = copy[lang];
     {t.topbar.nav.map((link) => <a href={link.href}>{link.label}</a>)}
   </nav>
   <span class="spacer"></span>
+  <a class="btn btn-sm" href={withBase(t.alt.href)} hreflang={t.alt.lang} title={t.alt.title}>
+    <span lang={t.alt.lang}>{t.alt.label}</span>
+  </a>
   <a class="btn btn-solid btn-sm" href="#install">
     <span aria-hidden="true">⤓</span> {t.topbar.install}
   </a>
