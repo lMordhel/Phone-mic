@@ -93,7 +93,8 @@ systemctl --user status phone-micd
 
 ## Daily use
 
-One click: **Micrófono del teléfono** in the application menu.
+One click: **Micrófono del teléfono** in the application menu, or `phone-mic` in a
+terminal for the panel (keys `i` start, `d` stop).
 
 That launcher reconnects adb (last working port, then mDNS discovery, then it asks
 for the port the phone shows) and starts forwarding with a watchdog that keeps the
@@ -119,9 +120,20 @@ from the dropdown, restart the application.
 
 ## Terminal panel
 
+`install.sh` puts a `phone-mic` command in `~/.local/bin`:
+
 ```bash
-./tui/phone_mic_tui.py          # interactive panel
-./tui/phone_mic_tui.py --once   # one snapshot, scriptable
+phone-mic            # interactive panel
+phone-mic status     # one snapshot (same as --once)
+phone-mic start      # start forwarding
+phone-mic stop       # stop forwarding
+phone-mic reconnect  # reconnect adb
+```
+
+Without the installer, the same panel runs from the checkout:
+
+```bash
+./tui/phone_mic_tui.py
 ```
 
 ```

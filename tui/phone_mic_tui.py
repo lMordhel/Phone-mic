@@ -24,7 +24,8 @@ import sys
 import threading
 import time
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# realpath, not abspath: the command is installed as a symlink in ~/.local/bin
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SINK = "phonemic_sink"
 SOURCE = "phone_mic"
 SERVICE = "phone-micd"
@@ -315,12 +316,31 @@ def interactive() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="phone-mic terminal panel")
+    parser = argparse.ArgumentParser(
+        prog="phone-mic",
+        description="phone-mic terminal panel and control",
+        epilog="keys: i start   d stop   r reconnect adb   a fix routing   m meter   q quit")
+    parser.add_argument("command", nargs="?", default="tui",
+                        choices=["tui", "status", "start", "stop", "reconnect"],
+                        help="default: tui")
     parser.add_argument("--once", action="store_true",
-                        help="print one status snapshot and exit")
+                        help="print one status snapshot and exit (same as 'status')")
     args = parser.parse_args()
-    if args.once:
+
+    if args.once or args.command == "status":
         return once()
+    if args.command == "start":
+        ok, message = start_bridge()
+        print(f"phone-mic: {message}")
+        return 0 if ok else 1
+    if args.command == "stop":
+        ok, message = stop_bridge()
+        print(f"phone-mic: {message}")
+        return 0 if ok else 1
+    if args.command == "reconnect":
+        ok, message = reconnect_phone()
+        print(f"phone-mic: {message}")
+        return 0 if ok else 1
     return interactive()
 
 
