@@ -19,6 +19,12 @@ set -eu
 SINK=phonemic_sink
 SOURCE=phone_mic
 FIRST_WAIT_S=60
+# scrcpy buffers 200 ms of audio by default, which is audible as delay in a
+# conversation. 50 ms keeps the jitter cushion over Wi-Fi without that lag; the
+# SDL output buffer (10 ms default) is trimmed as well. Override with
+# AUDIO_BUFFER / AUDIO_OUTPUT_BUFFER when the network is worse than usual.
+AUDIO_BUFFER="${AUDIO_BUFFER:-50}"
+AUDIO_OUTPUT_BUFFER="${AUDIO_OUTPUT_BUFFER:-8}"
 
 die() { echo "scrcpy-mic: $*" >&2; exit 1; }
 
@@ -44,8 +50,9 @@ scrcpy_streams() {
         /application\.name = "scrcpy"/ { if (id != "" && sink != "") print id, sink }'
 }
 
-echo "scrcpy-mic: starting microphone forwarding into $SINK (Ctrl+C to stop)"
-scrcpy --no-video --audio-source=mic --audio-codec=opus "$@" &
+echo "scrcpy-mic: starting microphone forwarding into $SINK (buffer ${AUDIO_BUFFER} ms, Ctrl+C to stop)"
+scrcpy --no-video --audio-source=mic --audio-codec=opus \
+       --audio-buffer="$AUDIO_BUFFER" --audio-output-buffer="$AUDIO_OUTPUT_BUFFER" "$@" &
 SCRCPY_PID=$!
 
 cleanup() {

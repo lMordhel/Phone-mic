@@ -97,3 +97,11 @@ and a capture from phone_mic measured -14.5 dB max.
 
 L13 (evidence, "I hear myself"): the playback stream on the headphones was Brave playing the microphone test page back,
 not a routing loop in the phone-mic chain.
+
+L14 (evidence, latency): the perceived delay was scrcpy's default 200 ms audio buffering (`--audio-buffer=ms`). The
+wrapper now launches with `--audio-buffer=50 --audio-output-buffer=8`, overridable through AUDIO_BUFFER /
+AUDIO_OUTPUT_BUFFER. Stream 1766 stayed on phonemic_sink and the capture measured -20.3 dB.
+
+L15 (evidence, "I hear myself" is not a routing loop): with the phone as the microphone, Brave held a source-output on
+phone_mic and a playback stream on the default sink (the M07 headphones) at the same time, i.e. the microphone test page
+was playing the user's own recording back. The phone-mic chain has no monitor path from microphone to headphones.
