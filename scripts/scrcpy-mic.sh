@@ -51,7 +51,10 @@ scrcpy_streams() {
 }
 
 echo "scrcpy-mic: starting microphone forwarding into $SINK (buffer ${AUDIO_BUFFER} ms, Ctrl+C to stop)"
-scrcpy --no-video --audio-source=mic --audio-codec=opus \
+# --no-window: with --no-video scrcpy still creates an empty 256x256 window that
+# shows nothing and has no decorations. It is pure visual noise for an audio-only
+# bridge, so no window is created at all.
+scrcpy --no-video --no-window --audio-source=mic --audio-codec=opus \
        --audio-buffer="$AUDIO_BUFFER" --audio-output-buffer="$AUDIO_OUTPUT_BUFFER" "$@" &
 SCRCPY_PID=$!
 
