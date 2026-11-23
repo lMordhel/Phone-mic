@@ -124,3 +124,8 @@ owned the scrcpy process. `phone-mic-bridge.service` now owns it, the menu entry
 user action. Root cause of the first failed attempt: the unit ran `scrcpy-mic.sh`, which exits when no adb device exists;
 it now runs `phone-mic.sh` so every restart reconnects first. `connect-phone.sh` also learned to save the endpoint when a
 connection already exists, because earlier connections were made by hand and left no port to retry.
+
+L19 (decision, scope): the project is terminal-only. The desktop application was removed from the repository and
+uninstalled from the system, and the README no longer advertises an Android app: `scrcpy` is the phone side and no APK is
+built or required. T2 (native Android sender) stays in this log as unbuilt work, on hold until the user asks for it; the
+UDP receiver `phone-micd` remains installed but nothing feeds it while scrcpy is the audio path.

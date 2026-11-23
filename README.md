@@ -27,9 +27,8 @@ telemetry to something that should be a local audio device.
 | Virtual device (`Phone-Mic`) in PipeWire | **working** |
 | Linux receiver `phone-micd` (UDP + Opus decoder + jitter buffer) | **working**, tested |
 | systemd user service + installer | **working**, tested |
-| Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested |
+| Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested, nothing to install on the phone |
 | Terminal panel (`tui/phone_mic_tui.py`) | **working**, tested |
-| Phone side: `scrcpy --audio-source=mic` | **working**, nothing to install on the phone |
 
 The phone side is `scrcpy`: there is **no app to install on the phone** and no app
 to build in this repository. `scrcpy --audio-source=mic` captures the phone
