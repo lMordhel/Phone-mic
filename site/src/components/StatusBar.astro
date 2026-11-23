@@ -1,0 +1,23 @@
+---
+import { DEFAULT_THEME } from '../data/themes.ts';
+import { copy, type Lang } from '../i18n/copy.ts';
+// The theme name is rendered from the data file, so the status bar cannot
+// disagree with the palette the page boots with.
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<footer class="statusbar">
+  <span class="st">{t.status.active}</span>
+  {t.status.hints.map((hint) => <span class="ghost">{hint}</span>)}
+  <span class="spacer"></span>
+  <a class="not-audited" href="#security">{t.status.audited}</a>
+  <a href="https://github.com/lMordhel/Phone-mic#readme">{t.status.manual}</a>
+  <a href="https://github.com/lMordhel/Phone-mic">{t.status.github}</a>
+  <span>{t.status.themeLabel} <span class="theme-now" id="theme-now">{DEFAULT_THEME}</span></span>
+</footer>
