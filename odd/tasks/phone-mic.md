@@ -81,3 +81,10 @@ through the service measured -9.6 dB max with 0 lost packets.
 L10 (evidence, environment): `sudo pacman -S jdk17-openjdk android-tools` failed with 404 on every mirror because the
 stale `cachyos-v3` database (2026-11-14) offers `17.0.21.0.2` while `extra` (2026-11-16) offers `17.0.21.0.3`. Corrected
 command for the user to run: `sudo pacman -S --needed extra/jdk17-openjdk extra/android-tools`.
+
+L11 (evidence, scrcpy shortcut verified): wireless debugging paired with `adb pair 192.168.100.57:43053` (pairing port
+discovered with `avahi-browse -prt _adb-tls-pairing._tcp`, because the phone shows only the connection port on the main
+screen), then `adb connect 192.168.100.57:40735` against Redmi Note 13 (23129RA5FL, Android 15). `scrcpy 5.0.1
+--audio-source=mic` works, but `PULSE_SINK` is ignored because scrcpy plays through SDL, so its stream is created on the
+default sink and must be moved with `pactl move-sink-input`. After the move, sink-input 1181 sat on phonemic_sink and a
+6 s capture from phone_mic measured -1.8 dB max / -37.9 dB mean, i.e. real phone audio in the virtual microphone.
