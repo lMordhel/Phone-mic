@@ -4,7 +4,7 @@
 #
 # The persistent equivalent is conf/60-phone-mic.conf, which PipeWire reads on
 # its next start. Both paths create the same two objects:
-#   phonemic_sink  Audio/Sink      where phone-micd plays its audio
+#   phonemic_sink  Audio/Sink      where the phone bridge plays its audio
 #   phone_mic      Audio/Source    what applications capture from
 set -eu
 

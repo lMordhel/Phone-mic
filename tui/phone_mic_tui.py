@@ -28,7 +28,6 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SINK = "phonemic_sink"
 SOURCE = "phone_mic"
-SERVICE = "phone-micd"
 BRIDGE_UNIT = "phone-mic-bridge"
 
 
@@ -59,10 +58,6 @@ def bridge_unit_active() -> bool:
 def bridge_unit_state() -> str:
     """active (running) | activating (retrying) | inactive | failed"""
     return run(["systemctl", "--user", "is-active", BRIDGE_UNIT]).strip() or "unknown"
-
-
-def service_active() -> bool:
-    return run(["systemctl", "--user", "is-active", SERVICE]).strip() == "active"
 
 
 def sink_index() -> str:
@@ -192,7 +187,6 @@ def snapshot(level: LevelMeter | None) -> list[tuple[str, str]]:
     want = sink_index()
     have = bridge_sink()
     rows: list[tuple[str, str]] = []
-    rows.append(("receiver service", "running" if service_active() else "stopped"))
     rows.append(("virtual device", f"{SINK} / {SOURCE}" if want and source_present()
                  else "missing (run scripts/load-virtual-mic.sh)"))
     rows.append(("phone (adb)", ", ".join(devices) if devices else "not connected"))

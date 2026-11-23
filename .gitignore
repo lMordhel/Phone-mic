@@ -1,6 +1,3 @@
-phone-micd
-pm-send
-*.o
 *.raw
 __pycache__/
 *.pyc

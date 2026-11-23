@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Per-user install of phone-mic: build, place the receiver in ~/.local/bin, and
-# register the systemd user service. No root required.
+# Per-user install of phone-mic: the virtual microphone, the bridge service and
+# the `phone-mic` terminal command. No root required.
 #
 # What it does NOT do: it never restarts PipeWire (that drops Bluetooth audio
 # links and in-flight screencasts). The virtual device is loaded for the running
@@ -15,22 +15,12 @@ PIPEWIRE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
 DOC_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/phone-mic"
 
 command -v pactl >/dev/null || { echo "pactl not found: install pipewire-pulse" >&2; exit 1; }
-
-echo "== build"
-make -C "$HERE"
-
-echo "== install receiver"
-mkdir -p "$BIN_DIR" "$UNIT_DIR" "$PIPEWIRE_DIR" "$DOC_DIR"
-install -m 0755 "$HERE/phone-micd" "$BIN_DIR/phone-micd"
+command -v scrcpy >/dev/null || echo "warning: scrcpy is missing (sudo pacman -S --needed extra/scrcpy)" >&2
+command -v adb >/dev/null || echo "warning: adb is missing (sudo pacman -S --needed extra/android-tools)" >&2
 
 echo "== install virtual microphone configuration"
+mkdir -p "$PIPEWIRE_DIR" "$UNIT_DIR" "$BIN_DIR" "$DOC_DIR"
 install -m 0644 "$HERE/conf/60-phone-mic.conf" "$PIPEWIRE_DIR/60-phone-mic.conf"
-
-echo "== install the bridge service"
-install -m 0644 "$HERE/packaging/phone-mic-bridge.service" "$UNIT_DIR/phone-mic-bridge.service"
-
-echo "== install documentation"
-install -m 0644 "$HERE/README.md" "$HERE/PROTOCOL.md" "$DOC_DIR/"
 
 echo "== install the phone-mic command"
 cat > "$BIN_DIR/phone-mic" <<WRAPPER
@@ -41,12 +31,14 @@ exec "$HERE/tui/phone_mic_tui.py" "\$@"
 WRAPPER
 chmod 0755 "$BIN_DIR/phone-mic"
 
-echo "== register service"
-sed "s|%h|$HOME|g" "$HERE/packaging/phone-micd.service" > "$UNIT_DIR/phone-micd.service"
+echo "== install the bridge service"
+install -m 0644 "$HERE/packaging/phone-mic-bridge.service" "$UNIT_DIR/phone-mic-bridge.service"
 systemctl --user daemon-reload
-systemctl --user enable phone-micd.service
-# The bridge is deliberately not enabled: it captures the phone microphone the
-# whole time it runs. Start it with 'phone-mic start' (or 'i' in the panel).
+# Deliberately not enabled: while it runs it captures the phone microphone the
+# whole time. Start it with 'phone-mic start' (or 'i' in the panel).
+
+echo "== install documentation"
+install -m 0644 "$HERE/README.md" "$DOC_DIR/"
 
 echo "== load the virtual device for this session"
 "$HERE/scripts/load-virtual-mic.sh"
@@ -55,13 +47,17 @@ cat <<EOF
 
 Installed.
 
-  panel          phone-mic            (terminal panel; no desktop app)
-  start now      systemctl --user start phone-micd
-  follow         journalctl --user -u phone-micd -f
-  status         systemctl --user status phone-micd
-  uninstall      rm ~/.local/bin/phone-micd ~/.config/systemd/user/phone-micd.service \\
-                    ~/.config/pipewire/pipewire.conf.d/60-phone-mic.conf
-                 systemctl --user disable --now phone-micd
+  panel          phone-mic              (keys: i start, d stop, r reconnect, q quit)
+  status         phone-mic status
+  start / stop   phone-mic start | stop
+  service log    journalctl --user -u phone-mic-bridge -f
 
-Open the firewall for the phone: sudo ufw allow 47718/udp
+Phone side: enable wireless debugging and pair once (adb pair IP:PORT).
+No app is installed on the phone.
+
+Uninstall:
+  systemctl --user disable --now phone-mic-bridge
+  rm ~/.local/bin/phone-mic ~/.config/systemd/user/phone-mic-bridge.service \\
+     ~/.config/pipewire/pipewire.conf.d/60-phone-mic.conf
+  rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
 EOF
