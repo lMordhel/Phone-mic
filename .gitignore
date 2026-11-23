@@ -1,3 +1,9 @@
 *.raw
 __pycache__/
 *.pyc
+
+# promo site
+site/node_modules/
+site/dist/
+site/.astro/
+.vercel/
