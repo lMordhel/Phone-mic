@@ -29,14 +29,11 @@ telemetry to something that should be a local audio device.
 | systemd user service + installer | **working**, tested |
 | Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested |
 | Terminal panel (`tui/phone_mic_tui.py`) | **working**, tested |
-| Native Android app (Kotlin + UDP, no adb) | planned, see [Roadmap](#roadmap) |
+| Phone side: `scrcpy --audio-source=mic` | **working**, nothing to install on the phone |
 
-Two phone paths exist today:
-
-- **`scrcpy` bridge** — no app to build or install, uses the phone microphone
-  through adb. This is the path documented below and the one that works now.
-- **Native app** — removes the adb dependency (pure Wi-Fi). Receiver side is
-  already done and tested with `pm-send`, the Android half is still to come.
+The phone side is `scrcpy`: there is **no app to install on the phone** and no app
+to build in this repository. `scrcpy --audio-source=mic` captures the phone
+microphone over adb and `phone-mic` routes it into the virtual device.
 
 ## Requirements
 
@@ -63,7 +60,9 @@ user unit, the PipeWire fragment and the documentation, enables the service, and
 loads the virtual device into the running session. It needs no root and **never
 restarts PipeWire**.
 
-Open the firewall if the native app will be used later:
+The firewall is not needed for the `scrcpy` path. It is only required if a
+UDP sender is added later, because `phone-micd` accepts the protocol in
+[PROTOCOL.md](PROTOCOL.md) on this port:
 
 ```bash
 sudo ufw allow 47718/udp
@@ -202,7 +201,7 @@ device by itself.
 
 | Setting | Where | Default |
 | --- | --- | --- |
-| UDP port (native app) | `phone-micd --port` / unit `ExecStart` | 47718 |
+| UDP port (`phone-micd`, unused while scrcpy is the phone path) | `phone-micd --port` / unit `ExecStart` | 47718 |
 | Virtual sink / source names | `conf/60-phone-mic.conf` | `phonemic_sink` / `phone_mic` |
 | scrcpy audio buffering | `AUDIO_BUFFER` env var | 50 ms (scrcpy default is 200 ms) |
 | scrcpy SDL output buffer | `AUDIO_OUTPUT_BUFFER` env var | 8 ms |
@@ -254,14 +253,14 @@ rm ~/.local/bin/phone-micd ~/.config/systemd/user/phone-micd.service \
 rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
 ```
 
-## Roadmap
+## What this is not
 
-- **T2** Native Android app: `AudioRecord` at 48 kHz mono, UDP packets per
-  `PROTOCOL.md`, raw PCM first then Opus; no adb, no cable.
-- **T3** mDNS discovery so the IP is never typed.
-- **T4** Reconnection and loss metrics on the native path.
-- **T5** APK packaging.
-- **T6** End-to-end verification against Discord, OBS and a browser microphone page.
+- **Not an Android app.** No APK is built, published or required: the phone is used
+  as-is through `scrcpy`.
+- **Not a desktop application.** There is no icon, window or tray entry; the
+  terminal command is the whole interface.
+- `src/phone-micd.c` is a UDP receiver that speaks the protocol in
+  [PROTOCOL.md](PROTOCOL.md). It is installed and running, but nothing sends to it
+  today; the live audio path is `scrcpy` into `phonemic_sink`.
 
-Work tracking, specs and evidence live in
-[`odd/tasks/phone-mic.md`](odd/tasks/phone-mic.md).
+Work tracking and evidence live in [`odd/tasks/phone-mic.md`](odd/tasks/phone-mic.md).
