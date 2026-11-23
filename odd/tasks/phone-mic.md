@@ -105,3 +105,9 @@ AUDIO_OUTPUT_BUFFER. Stream 1766 stayed on phonemic_sink and the capture measure
 L15 (evidence, "I hear myself" is not a routing loop): with the phone as the microphone, Brave held a source-output on
 phone_mic and a playback stream on the default sink (the M07 headphones) at the same time, i.e. the microphone test page
 was playing the user's own recording back. The phone-mic chain has no monitor path from microphone to headphones.
+
+L16 (evidence, after-reboot procedure): `phone-micd` is `enabled` and the virtual device configuration is installed, so
+both survive a reboot. The adb connection and the scrcpy bridge do not. `scripts/connect-phone.sh` reconnects using the
+last working port (saved in ~/.local/state/phone-mic), then adb mDNS, then avahi, and only then asks the user for the
+port. `scripts/phone-mic.sh` chains connect + forwarding and is wired to a desktop entry, so the daily action is one click.
+Verified: with the device connected the script reports "already connected" and exits without touching the session.
