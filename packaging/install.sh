@@ -26,6 +26,17 @@ install -m 0755 "$HERE/phone-micd" "$BIN_DIR/phone-micd"
 echo "== install virtual microphone configuration"
 install -m 0644 "$HERE/conf/60-phone-mic.conf" "$PIPEWIRE_DIR/60-phone-mic.conf"
 
+echo "== install the bridge service"
+install -m 0644 "$HERE/packaging/phone-mic-bridge.service" "$UNIT_DIR/phone-mic-bridge.service"
+
+echo "== install the menu entries"
+APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APPS_DIR"
+for entry in phone-mic phone-mic-tui; do
+    sed "s|/home/swat/Proyectos/phone-mic|$HERE|g" "$HERE/packaging/$entry.desktop" \
+        > "$APPS_DIR/$entry.desktop"
+done
+
 echo "== install documentation"
 install -m 0644 "$HERE/README.md" "$HERE/PROTOCOL.md" "$DOC_DIR/"
 
@@ -42,6 +53,8 @@ echo "== register service"
 sed "s|%h|$HOME|g" "$HERE/packaging/phone-micd.service" > "$UNIT_DIR/phone-micd.service"
 systemctl --user daemon-reload
 systemctl --user enable phone-micd.service
+# The bridge is deliberately not enabled: it captures the phone microphone the
+# whole time it runs. Start it with the menu entry or 'phone-mic start'.
 
 echo "== load the virtual device for this session"
 "$HERE/scripts/load-virtual-mic.sh"

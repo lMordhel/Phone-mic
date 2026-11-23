@@ -116,3 +116,11 @@ L17 (evidence, terminal panel): `tui/phone_mic_tui.py` renders the real state (s
 pid and routing, level meter) and exposes start/stop/reconnect/re-route/meter keys. Verified with `--once` (snapshot
 against the live session) and by running it under a pseudo-terminal: it renders and the meter bar fills as audio arrives.
 The panel owns no audio path, so quitting it does not cut the microphone.
+
+L18 (evidence, the bridge moved to systemd): closing the launcher window used to stop the microphone because the window
+owned the scrcpy process. `phone-mic-bridge.service` now owns it, the menu entry only starts the service and returns, and
+`phone-mic`/the TUI call systemctl. Verified: killing scrcpy brought it back (new pid) in under 10 s, and after
+`adb disconnect` plus a killed scrcpy the service reconnected adb (port 40735) and restarted forwarding within 25 s with no
+user action. Root cause of the first failed attempt: the unit ran `scrcpy-mic.sh`, which exits when no adb device exists;
+it now runs `phone-mic.sh` so every restart reconnects first. `connect-phone.sh` also learned to save the endpoint when a
+connection already exists, because earlier connections were made by hand and left no port to retry.

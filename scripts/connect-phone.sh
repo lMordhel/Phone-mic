@@ -20,8 +20,15 @@ device_online() {
 }
 
 if device_online; then
-    adb devices | awk 'NR>1 && $2=="device" {print "phone-mic: already connected (" $1 ")"}'
-    exit 0
+    # Learn the endpoint of an already existing connection: without this, a
+    # connection created outside this script leaves no port to retry later.
+    adb devices | awk 'NR>1 && $2=="device" && $1 ~ /:/ {print $1; exit}' |
+    while IFS= read -r target; do
+        printf '%s\n' "${target%:*}" > "$IP_FILE"
+        printf '%s\n' "${target##*:}" > "$PORT_FILE"
+        echo "phone-mic: already connected ($target), saved for reconnects"
+    done
+    adb devices | awk 'NR>1 && $2=="device" {found=1} END {exit !found}' && exit 0
 fi
 
 ip=$DEFAULT_IP

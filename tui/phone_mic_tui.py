@@ -29,6 +29,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SINK = "phonemic_sink"
 SOURCE = "phone_mic"
 SERVICE = "phone-micd"
+BRIDGE_UNIT = "phone-mic-bridge"
 
 
 # --------------------------------------------------------------------------- state
@@ -49,6 +50,15 @@ def adb_devices() -> list[str]:
 def bridge_pids() -> list[int]:
     out = run(["pgrep", "-x", "scrcpy"])
     return [int(p) for p in out.split() if p.isdigit()]
+
+
+def bridge_unit_active() -> bool:
+    return run(["systemctl", "--user", "is-active", BRIDGE_UNIT]).strip() == "active"
+
+
+def bridge_unit_state() -> str:
+    """active (running) | activating (retrying) | inactive | failed"""
+    return run(["systemctl", "--user", "is-active", BRIDGE_UNIT]).strip() or "unknown"
 
 
 def service_active() -> bool:
@@ -139,19 +149,19 @@ class LevelMeter(threading.Thread):
 # ------------------------------------------------------------------------- actions
 
 def start_bridge() -> tuple[bool, str]:
-    script = os.path.join(REPO, "scripts", "phone-mic.sh")
-    if not os.path.exists(script):
-        return False, "launcher not found"
-    try:
-        subprocess.Popen([script], cwd=REPO, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-    except OSError as exc:
-        return False, str(exc)
-    return True, "starting"
+    """Start the systemd user unit: the bridge outlives this panel."""
+    out = subprocess.run(["systemctl", "--user", "start", BRIDGE_UNIT],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return False, (out.stderr or "systemctl start failed").strip().splitlines()[-1]
+    return True, "bridging (service started; closing the panel keeps it running)"
 
 
 def stop_bridge() -> tuple[bool, str]:
-    subprocess.run(["pkill", "-x", "scrcpy"], check=False)
+    out = subprocess.run(["systemctl", "--user", "stop", BRIDGE_UNIT],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return False, (out.stderr or "systemctl stop failed").strip().splitlines()[-1]
     return True, "stopped"
 
 
@@ -186,11 +196,14 @@ def snapshot(level: LevelMeter | None) -> list[tuple[str, str]]:
     rows.append(("virtual device", f"{SINK} / {SOURCE}" if want and source_present()
                  else "missing (run scripts/load-virtual-mic.sh)"))
     rows.append(("phone (adb)", ", ".join(devices) if devices else "not connected"))
+    state = bridge_unit_state()
     if pids:
         routing = "ok" if have == want else f"WRONG (sink {have or '?'})"
-        rows.append(("bridge", f"forwarding (pid {pids[0]}), routing {routing}"))
+        rows.append(("bridge service", f"{state} (pid {pids[0]}), routing {routing}"))
+    elif state in ("activating", "active"):
+        rows.append(("bridge service", f"{state}, waiting for the phone"))
     else:
-        rows.append(("bridge", "stopped"))
+        rows.append(("bridge service", state))
     if level is not None:
         rows.append(("audio", f"peak {level.peak_db:.1f} dB   rms {level.rms_db:.1f} dB"
                      if level.running else "meter unavailable"))

@@ -1,0 +1,24 @@
+[Unit]
+Description=phone-mic bridge (phone microphone into Phone-Mic)
+Documentation=file:%h/Proyectos/phone-mic/README.md
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+# The phone is not always reachable: retrying forever is the intended behaviour,
+# so the start rate limit must not give up on it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# phone-mic.sh, not scrcpy-mic.sh: it runs connect-phone.sh first, so every
+# restart also reconnects adb (last known port, then mDNS discovery).
+ExecStart=%h/Proyectos/phone-mic/scripts/phone-mic.sh
+# A dropped adb link, a phone that went to sleep or a scrcpy crash all end this
+# process; restarting runs scripts/connect-phone.sh again, which retries the last
+# known port and then discovers the advertised service over mDNS.
+Restart=always
+RestartSec=5
+# Real-time audio path.
+Nice=-5
+
+[Install]
+WantedBy=default.target

@@ -96,6 +96,31 @@ systemctl --user status phone-micd
 One click: **Micrófono del teléfono** in the application menu, or `phone-mic` in a
 terminal for the panel (keys `i` start, `d` stop).
 
+Both talk to the `phone-mic-bridge` **systemd user service**, which owns the
+forwarding process:
+
+```bash
+systemctl --user start phone-mic-bridge    # or 'phone-mic start'
+systemctl --user stop  phone-mic-bridge    # or 'phone-mic stop'
+systemctl --user status phone-mic-bridge
+journalctl --user -u phone-mic-bridge -f
+```
+
+The service matters for two reasons:
+
+- **Closing the window or the panel does not stop the audio.** Only an explicit
+  stop does.
+- **Reconnection is automatic.** A dropped adb link, a phone that went to sleep or
+  a scrcpy crash ends the process, and `Restart=always` runs the launcher again,
+  which reconnects adb (last known port, then mDNS) before forwarding.
+
+The bridge is **not** enabled at login on purpose: while it runs it captures the
+phone microphone continuously. Enable it if that is what you want:
+
+```bash
+systemctl --user enable phone-mic-bridge
+```
+
 That launcher reconnects adb (last working port, then mDNS discovery, then it asks
 for the port the phone shows) and starts forwarding with a watchdog that keeps the
 audio on the virtual sink across reconnections.
@@ -167,8 +192,8 @@ It is also in the application menu as **Micrófono del teléfono (panel)**.
 | --- | --- |
 | `phone-micd` service | yes, `enabled` |
 | `Phone-Mic` virtual device | yes, PipeWire configuration |
-| adb connection | no, the launcher reconnects |
-| `scrcpy` forwarding | no, the launcher starts it |
+| adb connection | no, the bridge service reconnects automatically once started |
+| `scrcpy` forwarding | no, start the bridge: menu entry or `phone-mic start` |
 
 With a USB cable instead of Wi-Fi there is nothing to reconnect: `adb` finds the
 device by itself.
