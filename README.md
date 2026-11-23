@@ -124,14 +124,28 @@ systemctl --user enable phone-mic-bridge
 ## Terminal panel
 
 ```
-phone-mic  panel del microfono del telefono
-  virtual device     phonemic_sink / phone_mic
-  phone (adb)        192.168.100.57:40735
-  bridge service     active (pid 76187), routing ok
-  audio              peak -6.2 dB   rms -24.3 dB
-  nivel  [###################---------]   -6.2 dB
+phone-mic microfono del telefono
+  virtual device  phonemic_sink / phone_mic
+  phone (adb)     192.168.100.57:40735
+  bridge service  active (pid 76187), routing ok
+  audio           peak  -17.8 dB   rms  -21.1 dB
+
+    ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   0 dB
+    ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
+    █  █  █  █  █  █  █  █  █  █  █  █  █  █  -18 dB
+    █  █  █  █  █  █  █  █  █  █  █  █  █  █
+    █  █  █  █  █  █  █  █  █  █  █  █  █  █
+    █  █  █  █  █  █  █  █  █  █  █  █  █  █
+    █  █  █  █  █  █  █  █  █  █  █  █  █  █  -60 dB
+  -------------------------------------------
+
   i iniciar   d detener   r reconectar   a arreglar ruta   m medidor   q salir
 ```
+
+The meter is vertical: 14 columns, one per 90 ms window of audio, drawn bottom-up
+with a 60 dB scale. Bars are green below -18 dB, yellow from -18 to -6 dB and red
+above -6 dB, so clipping is visible at a glance. It opens its own 8 kHz capture
+client and can be switched off with `m`.
 
 | Key | Action |
 | --- | --- |
@@ -182,6 +196,7 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 | Bluetooth headset drops when audio restarts | a PipeWire restart tears down Bluetooth links | never restart PipeWire to apply configuration; use `scripts/load-virtual-mic.sh` |
 | Clicky or choppy audio | buffer too low for the network | raise `AUDIO_BUFFER` |
 | Bridge stuck retrying | the phone is unreachable or wireless debugging is off | `phone-mic status`, then check the phone |
+| Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph | normal; the panel fills once the capture is running |
 
 ## Uninstall
 
