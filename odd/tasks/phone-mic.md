@@ -24,7 +24,7 @@ S6. The existing Bluetooth headset (M07) must keep working as the audio output w
 | T2 | S1, S3 | inline (Kotlin, needs Android toolchain) | - | pending |
 | T3 | S1 | inline (mDNS discovery via avahi) | - | pending |
 | T4 | S1, S6 | inline (reconnect, silence, metrics) | - | pending |
-| T5 | S1 | inline (systemd user unit + APK packaging) | - | pending |
+| T5 | S1 | inline (systemd user unit + APK packaging) | pending | unit done, APK blocked by T2 |
 | T6 | S1, S2, S6 | inline (end-to-end against Discord, OBS, mictests) | - | pending |
 
 T1 - Linux receiver `phone-micd`: UDP input, sequence-aware jitter buffer, optional Opus decode, and playback into a
@@ -72,3 +72,12 @@ splits on whitespace, so a space truncates `device.description` to its first wor
 L8 (evidence): the virtual microphone is loaded in the live session with `pactl` and not by restarting PipeWire,
 because a restart drops the M07 Bluetooth link and the Hyprland screencast session (S6, and the incident recorded
 in L5).
+
+L9 (evidence, T5 unit): `packaging/install.sh` built and installed the receiver to `~/.local/bin/phone-micd`, the unit
+to `~/.config/systemd/user/phone-micd.service` (enabled, `systemd-analyze --user verify` clean) and the PipeWire fragment
+to `~/.config/pipewire/pipewire.conf.d/`. The service listens on udp/47718 and an Opus test tone captured from `phone_mic`
+through the service measured -9.6 dB max with 0 lost packets.
+
+L10 (evidence, environment): `sudo pacman -S jdk17-openjdk android-tools` failed with 404 on every mirror because the
+stale `cachyos-v3` database (2026-11-14) offers `17.0.21.0.2` while `extra` (2026-11-16) offers `17.0.21.0.3`. Corrected
+command for the user to run: `sudo pacman -S --needed extra/jdk17-openjdk extra/android-tools`.

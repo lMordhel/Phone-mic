@@ -1,0 +1,18 @@
+[Unit]
+Description=phone-mic receiver (phone microphone for PipeWire)
+Documentation=file:%h/.local/share/phone-mic/README.md
+# The virtual device comes from the PipeWire configuration; without the audio
+# server there is nothing to play into.
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/phone-micd --stats
+Restart=on-failure
+RestartSec=2
+# The receiver is a real-time audio path: keep it off the batch scheduling class.
+Nice=-5
+
+[Install]
+WantedBy=default.target

@@ -2,7 +2,7 @@
  * phone-micd - receive phone audio over UDP and play it into a PipeWire sink.
  *
  * The sink (`phonemic_sink`) is paired by the PipeWire configuration with a
- * remap source named "Phone Mic", which is what browsers, Discord and OBS
+ * remap source named "Phone-Mic", which is what browsers, Discord and OBS
  * enumerate as an input device. See PROTOCOL.md for the wire format.
  *
  * Single threaded: the UDP socket and the stream's process callback both run
@@ -357,7 +357,7 @@ int main(int argc, char *argv[])
 				  PW_KEY_MEDIA_CATEGORY, "Playback",
 				  PW_KEY_MEDIA_ROLE, "Communication",
 				  PW_KEY_NODE_NAME, "phone-micd-out",
-				  PW_KEY_NODE_DESCRIPTION, "Phone Mic feed",
+				  PW_KEY_NODE_DESCRIPTION, "Phone-Mic feed",
 				  "target.object", sink,
 				  NULL);
 	if (props == NULL) {
@@ -412,7 +412,7 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr,
 		"phone-micd: listening on udp/%d, playing into %s, exposing "
-		"\"Phone Mic\" as the capture device\n",
+		"\"Phone-Mic\" as the capture device\n",
 		port, sink);
 
 	pw_main_loop_run(s.loop);

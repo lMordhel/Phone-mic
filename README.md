@@ -59,6 +59,17 @@ Open the firewall for the phone on the same network:
 sudo ufw allow 47718/udp
 ```
 
+## Install as a user service
+
+```
+./packaging/install.sh          # build, install binary, unit, PipeWire conf
+systemctl --user start phone-micd
+journalctl --user -u phone-micd -f
+```
+
+The unit is `Restart=on-failure`, runs after PipeWire, and never restarts the
+audio server. Uninstall commands are printed at the end of the script.
+
 ## Test without a phone
 
 In two terminals:
