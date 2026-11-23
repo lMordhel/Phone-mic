@@ -1,0 +1,61 @@
+# phone-mic
+
+Phone as a real PipeWire microphone for the PC, built in-house (Android sender + Linux receiver), replacing third-party
+apps such as WO Mic (vendor-discontinued on Linux) and Micstream (ads, telemetry).
+
+## Specs
+
+S1. The PC must expose the phone audio as a normal input device that browsers, Discord and OBS all list.
+    User words: "usar mi celualr como microfono en esta pc" and "ninguna pagina o app detrecta los micrfonos".
+S2. The third-party attempt already failed once and must not be repeated as-is:
+    User words: "ya probamos con mic wo y no funciono".
+S3. The application is written by us, not adapted from another project:
+    User words: "oye y si programamos una ?" answered with "App propia completa (Android + Linux)".
+S4. The Linux receiver comes first and is validated on its own, before any Android toolchain is installed:
+    Decision "Empezar solo por el cliente Linux".
+S5. The project lives outside the POS-UTP repository, at /home/swat/Proyectos/phone-mic.
+S6. The existing Bluetooth headset (M07) must keep working as the audio output while the phone provides the microphone.
+
+## Tasks
+
+| ID | Spec | Route | Commit | Status |
+| --- | --- | --- | --- | --- |
+| T1 | S1, S4 | inline (C + libpipewire + libopus) | pending | open |
+| T2 | S1, S3 | inline (Kotlin, needs Android toolchain) | - | pending |
+| T3 | S1 | inline (mDNS discovery via avahi) | - | pending |
+| T4 | S1, S6 | inline (reconnect, silence, metrics) | - | pending |
+| T5 | S1 | inline (systemd user unit + APK packaging) | - | pending |
+| T6 | S1, S2, S6 | inline (end-to-end against Discord, OBS, mictests) | - | pending |
+
+T1 - Linux receiver `phone-micd`: UDP input, sequence-aware jitter buffer, optional Opus decode, and playback into a
+PipeWire null sink paired with a remap source named `Phone Mic` (class `Audio/Source`), which is the node kind that
+browsers, Discord and OBS enumerate.
+
+T2 - Android sender app (Kotlin): `AudioRecord` 48 kHz mono, packetise, send over UDP, reconnect. Starts with raw PCM to
+validate latency, then Opus.
+
+T3 - Automatic discovery so the IP is never typed by hand.
+
+T4 - Behaviour under failure: silence fill, underrun handling, reconnection, latency/loss metrics.
+
+T5 - Packaging: systemd user service for the receiver, installable APK for the phone.
+
+T6 - Verification: the virtual source is selectable and audible in Discord, OBS and a browser microphone test page while
+the M07 headset stays the output device.
+
+## Log
+
+L1 (user, verbatim): "ahora dime como puedo usar mi celualr como microfono en esta pc , ya probamos con mic wo y no funciono"
+
+L2 (user, verbatim): "oye y si programamos una ?"
+
+L3 (decision): full in-house app (Android + Linux). Location /home/swat/Proyectos/phone-mic. First work unit is the Linux
+receiver; the Android toolchain (jdk17-openjdk, cmdline-tools, platform, build-tools) is deferred until the user accepts
+the ~3 GB install.
+
+L4 (evidence): environment checked - gcc 16.2.1, clang 23.1.5, libpipewire-0.3 1.6.11 (dev headers), opus 1.6.1 (dev +
+runtime), python3 3.14, avahi active, no Java/Gradle/Android SDK, 17 GB free on /home.
+
+L5 (evidence, prior attempt): the WO Mic virtual source was technically sound (PipeWire exposed it and OBS listed it); the
+observable failure was the M07 headset dropping its Bluetooth link and a stale `default.configured.audio.source.0=womic_mic`
+entry, which is why S1 names the enumeration requirement explicitly and T4 covers reconnection.
