@@ -124,39 +124,70 @@ systemctl --user enable phone-mic-bridge
 ## Terminal panel
 
 ```
-phone-mic microfono del telefono
-  virtual device  phonemic_sink / phone_mic
-  phone (adb)     192.168.100.57:40735
-  bridge service  active (pid 76187), routing ok
-  audio           peak  -17.8 dB   rms  -21.1 dB
-
-    ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·   0 dB
-    ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
-    █  █  █  █  █  █  █  █  █  █  █  █  █  █  -18 dB
-    █  █  █  █  █  █  █  █  █  █  █  █  █  █
-    █  █  █  █  █  █  █  █  █  █  █  █  █  █
-    █  █  █  █  █  █  █  █  █  █  █  █  █  █
-    █  █  █  █  █  █  █  █  █  █  █  █  █  █  -60 dB
-  -------------------------------------------
-
-  i iniciar   d detener   r reconectar   a arreglar ruta   m medidor   q salir
+phone-mic            # dashboard
+phone-mic status     # one snapshot (same as --once)
+phone-mic start      # start forwarding
+phone-mic stop       # stop forwarding
+phone-mic reconnect  # reconnect adb
 ```
 
-The meter is vertical: 14 columns, one per 90 ms window of audio, drawn bottom-up
-with a 60 dB scale. Bars are green below -18 dB, yellow from -18 to -6 dB and red
-above -6 dB, so clipping is visible at a glance. It opens its own 8 kHz capture
-client and can be switched off with `m`.
+```
+╭────────────────────────────────────────────────────────────────────────────╮
+│  ◉ PHONE-MIC                                             PIPEWIRE · ADB    │
+│  phone as a microphone                                                     │
+├────────────────────────────────────────────────────────────────────────────┤
+│  PHONE LINK                          INPUT MONITOR                         │
+│  ┌─────────────────────────────────┐ ┌─────────────────────────────────┐   │
+│  │ ● CONNECTED                     │ │  ▅▅▅▅▅▅▅▅▅▅▅▆▅▅▅▅▅▅▅▅▅▅▆▅▅▆▅▆   │   │
+│  │ device     Redmi Note 13        │ │                                 │   │
+│  │ transport  Wi-Fi                │ │ INPUT LEVEL                     │   │
+│  │ address    192.168.100.57       │ │ ███████████████░░░ -10.5 dB     │   │
+│  │ buffer     50 ms                │ │ RMS -20.7 dB   buffer 50 ms     │   │
+│  │ routing ok                      │ │                                 │   │
+│  └─────────────────────────────────┘ └─────────────────────────────────┘   │
+│                                                                            │
+│  VIRTUAL MICROPHONE                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ ● Phone-Mic  PipeWire remap source                           ACTIVE  │  │
+│  │ service active · pid 87349 · routing ok                              │  │
+│  │ GAIN     ━━━━━━━━━━━━━━━━● 100%                                      │  │
+│  │ VOLUME   ━━━━━━━━━━━━━━━━● 100%                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  [C] Connect  [X] Stop  [M] Mute  [A] Reroute  [D] Devices  [Q] Quit       │
+│  [Tab] gain/volume  [←→] ±5%   ·   focus gain                              │
+╰────────────────────────────────────────────────────────────────────────────╯
+```
 
 | Key | Action |
 | --- | --- |
-| `i` | start the bridge service |
-| `d` | stop the bridge service |
-| `r` | reconnect adb (retries the last port, then mDNS) |
-| `a` | move the bridge stream back to the virtual sink |
-| `m` | toggle the level meter (opens its own capture client, 8 kHz) |
-| `q` | quit the panel; the bridge keeps running |
+| `C` | start the bridge service |
+| `X` | stop the bridge service |
+| `M` | mute / unmute the virtual microphone |
+| `A` | move the bridge stream back to the virtual sink |
+| `D` | overlay with the PipeWire input devices |
+| `Tab` | switch between GAIN and VOLUME |
+| `←` `→` | adjust the focused control by 5 % |
+| `R` | reconnect adb |
+| `Q` | quit (the bridge keeps running) |
 
-The panel owns no audio, so quitting it never cuts the microphone.
+What each reading means:
+
+- **GAIN** is the volume of the `phone_mic` source itself: what applications
+  receive. **VOLUME** is the volume of the bridge stream feeding the sink, i.e. how
+  loud the phone signal arrives. Both are real `pactl` controls, not decorations.
+- **INPUT MONITOR** shows a waveform of the last ~2 s (one column per 70 ms) over a
+  60 dB scale, plus the current peak and RMS. The meter opens its own 8 kHz capture
+  client; it is the only extra cost of the panel (~16 kB/s).
+- **buffer** is the scrcpy audio buffering (`AUDIO_BUFFER`, 50 ms default). It is
+  shown instead of a measured latency because that number is the one that can
+  actually be controlled from this side.
+- **routing** reports whether the bridge stream is on `phonemic_sink`. Pressing `A`
+  fixes it when it drifted.
+
+The panel owns no audio, so quitting it never cuts the microphone. Below 62x20 it
+shows a "terminal too small" note instead of drawing a broken frame.
 
 ## After a reboot
 
