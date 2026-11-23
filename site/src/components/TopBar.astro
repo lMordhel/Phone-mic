@@ -1,0 +1,24 @@
+---
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<header class="topbar">
+  <a class="brand" href="#top">
+    <span class="brand-dot" aria-hidden="true">◉</span>
+    PHONE-MIC
+  </a>
+  <nav class="nav" aria-label={t.a11y.navLabel}>
+    {t.topbar.nav.map((link) => <a href={link.href}>{link.label}</a>)}
+  </nav>
+  <span class="spacer"></span>
+  <a class="btn btn-solid btn-sm" href="#install">
+    <span aria-hidden="true">⤓</span> {t.topbar.install}
+  </a>
+</header>

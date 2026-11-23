@@ -1,0 +1,30 @@
+---
+// Hero: one claim, one sentence of proof, two exits. The level meter below is
+// decoration driven by the same three level roles the terminal panel uses.
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<section class="hero" id="top">
+  <p class="eyebrow">{t.hero.eyebrow}</p>
+  <h1 class="wordmark">PHONE-MIC</h1>
+  <p class="tagline">{t.hero.taglineBefore}<b>{t.hero.taglineStrong}</b>{t.hero.taglineAfter}</p>
+  <p class="lede">
+    {t.hero.lede.map((seg) => (seg.code ? <code>{seg.t}</code> : seg.t))}
+  </p>
+  <div class="cta">
+    <a class="btn btn-solid" href="#install">
+      <span aria-hidden="true">⤓</span> {t.hero.ctaPrimary}
+    </a>
+    <a class="btn" href="#panel">
+      <span aria-hidden="true">▸</span> {t.hero.ctaSecondary}
+    </a>
+  </div>
+  <div class="meter" aria-hidden="true"></div>
+</section>

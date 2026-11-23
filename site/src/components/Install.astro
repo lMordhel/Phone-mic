@@ -1,0 +1,99 @@
+---
+import { copy, type Lang } from '../i18n/copy.ts';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+
+// The commands and their output are literal: only the titles are translated.
+const blocks = [
+  {
+    title: t.install.blockTitles[0],
+    copy: 'sudo pacman -S --needed pipewire-audio android-tools scrcpy',
+    body:
+      '<span class="p">$</span> sudo pacman -S --needed \\\n' +
+      '    pipewire-audio android-tools scrcpy',
+  },
+  {
+    title: t.install.blockTitles[1],
+    copy:
+      'git clone https://github.com/lMordhel/Phone-mic.git && cd Phone-mic && ./packaging/install.sh',
+    body:
+      '<span class="p">$</span> git clone https://github.com/lMordhel/Phone-mic.git\n' +
+      '<span class="p">$</span> cd Phone-mic && ./packaging/install.sh',
+  },
+];
+
+const check = {
+  title: t.install.checkTitle,
+  copy: 'phone-mic status && phone-mic start',
+  body:
+    '<span class="p">$</span> phone-mic status\n' +
+    '<span class="ok">●</span> Phone-Mic  PipeWire remap source            <span class="ok">ACTIVE</span>\n' +
+    '<span class="warn">●</span> bridge      waiting for the phone           <span class="c">retrying</span>\n' +
+    '\n' +
+    '<span class="p">$</span> phone-mic start\n' +
+    '<span class="ok">●</span> bridge      connected over Wi-Fi            50 ms buffer',
+};
+---
+
+<section class="section" id="install">
+  <div class="sec-head">
+    <h2>{t.install.heading}</h2>
+    <p>{t.install.note}</p>
+  </div>
+  <p class="sec-sub">
+    {t.install.sub.map((seg) => (seg.code ? <code>{seg.t}</code> : seg.t))}
+  </p>
+
+  <div class="install-grid">
+    {
+      blocks.map((block) => (
+        <div class="term">
+          <div class="term-head">
+            {block.title}
+            <button
+              type="button"
+              class="copy"
+              data-copy={block.copy}
+              data-label-copy={t.install.copyLabel}
+              data-label-copied={t.install.copyCopied}
+              data-label-failed={t.install.copyFailed}
+              aria-label={t.install.copyAria(block.copy)}
+            >
+              {t.install.copyLabel}
+            </button>
+          </div>
+          <pre class="term-body"><code set:html={block.body}></code></pre>
+        </div>
+      ))
+    }
+  </div>
+
+  <div class="install-stack">
+    <div class="term">
+      <div class="term-head">
+        {check.title}
+        <button
+          type="button"
+          class="copy"
+          data-copy={check.copy}
+          data-label-copy={t.install.copyLabel}
+          data-label-copied={t.install.copyCopied}
+          data-label-failed={t.install.copyFailed}
+          aria-label={t.install.copyAria(check.copy)}
+        >
+          {t.install.copyLabel}
+        </button>
+      </div>
+      <pre class="term-body"><code set:html={check.body}></code></pre>
+      <div class="term-foot">
+        <span>{t.install.footLeft}</span>
+        <span>{t.install.footRight}</span>
+      </div>
+    </div>
+  </div>
+</section>
