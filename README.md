@@ -169,8 +169,31 @@ phone-mic reconnect  # reconnect adb
 | `D` | overlay with the PipeWire input devices |
 | `Tab` | switch between GAIN and VOLUME |
 | `←` `→` | adjust the focused control by 5 % |
+| `T` | theme picker (12 themes, saved to `~/.config/phone-mic/tui.conf`) |
 | `R` | reconnect adb |
 | `Q` | quit (the bridge keeps running) |
+
+### Themes
+
+`T` opens the picker; the choice is saved and used from then on. A theme is a full
+palette (background, border, accent, labels, state colours and the three level
+colours), not a single accent colour.
+
+| Family | Themes |
+| --- | --- |
+| Pastel | `pastel-mint`, `pastel-lavender`, `pastel-peach` |
+| Dark | `dark-mono`, `dark-ocean` (default), `dark-forest` |
+| Light | `light-paper`, `light-sky`, `light-sand` |
+| Warm | `warm-amber`, `warm-ember`, `warm-clay` |
+
+```bash
+phone-mic --theme warm-ember     # one run, without changing the saved theme
+```
+
+Colours are defined with `curses.init_color`, so the palettes are exact RGB on
+terminals that allow colour redefinition (kitty, foot, alacritty). Where that is not
+available the palette is approximated with the nearest xterm-256 cube colours, so
+themes still change but with less fidelity.
 
 What each reading means:
 

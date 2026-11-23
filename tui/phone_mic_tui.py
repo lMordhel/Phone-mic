@@ -46,6 +46,188 @@ H, V = "─", "│"
 TEE_L, TEE_R = "├", "┤"
 
 
+# -------------------------------------------------------------------------- themes
+
+ROLES = ("bg", "border", "accent", "label", "text", "dim",
+         "ok", "bad", "warn", "level_low", "level_mid", "level_hot")
+
+# Each theme is a full palette of RGB values per role, so a theme is a look, not a
+# single accent colour. Families are only used for ordering in the picker.
+THEME_FAMILIES: list[tuple[str, list[str]]] = [
+    ("PASTEL", ["pastel-mint", "pastel-lavender", "pastel-peach"]),
+    ("DARK", ["dark-mono", "dark-ocean", "dark-forest"]),
+    ("LIGHT", ["light-paper", "light-sky", "light-sand"]),
+    ("WARM", ["warm-amber", "warm-ember", "warm-clay"]),
+]
+
+THEMES: dict[str, dict[str, tuple[int, int, int]]] = {
+    "pastel-mint": {
+        "bg": (235, 245, 240), "border": (150, 200, 180), "accent": (60, 150, 130),
+        "label": (90, 170, 150), "text": (40, 80, 70), "dim": (145, 175, 165),
+        "ok": (70, 170, 120), "bad": (225, 125, 135), "warn": (215, 175, 95),
+        "level_low": (110, 200, 160), "level_mid": (240, 200, 110),
+        "level_hot": (235, 140, 150),
+    },
+    "pastel-lavender": {
+        "bg": (242, 238, 250), "border": (200, 190, 225), "accent": (120, 100, 190),
+        "label": (140, 120, 200), "text": (60, 50, 90), "dim": (172, 165, 198),
+        "ok": (110, 175, 150), "bad": (215, 115, 140), "warn": (220, 180, 110),
+        "level_low": (150, 130, 230), "level_mid": (230, 190, 120),
+        "level_hot": (230, 120, 150),
+    },
+    "pastel-peach": {
+        "bg": (253, 242, 235), "border": (240, 205, 185), "accent": (200, 110, 80),
+        "label": (215, 140, 110), "text": (90, 60, 50), "dim": (200, 170, 155),
+        "ok": (130, 180, 130), "bad": (215, 105, 100), "warn": (225, 170, 90),
+        "level_low": (240, 160, 120), "level_mid": (235, 180, 100),
+        "level_hot": (220, 110, 100),
+    },
+    "dark-mono": {
+        "bg": (18, 18, 18), "border": (70, 70, 70), "accent": (205, 205, 205),
+        "label": (155, 155, 155), "text": (225, 225, 225), "dim": (110, 110, 110),
+        "ok": (150, 205, 150), "bad": (220, 120, 120), "warn": (210, 190, 120),
+        "level_low": (165, 165, 165), "level_mid": (205, 205, 205),
+        "level_hot": (245, 245, 245),
+    },
+    "dark-ocean": {
+        "bg": (10, 20, 30), "border": (30, 60, 80), "accent": (80, 200, 220),
+        "label": (90, 170, 200), "text": (200, 230, 240), "dim": (90, 120, 140),
+        "ok": (80, 200, 170), "bad": (230, 110, 120), "warn": (230, 190, 90),
+        "level_low": (70, 180, 200), "level_mid": (120, 210, 230),
+        "level_hot": (240, 140, 150),
+    },
+    "dark-forest": {
+        "bg": (12, 22, 16), "border": (40, 70, 50), "accent": (140, 220, 150),
+        "label": (110, 180, 130), "text": (210, 235, 215), "dim": (90, 120, 100),
+        "ok": (130, 220, 140), "bad": (225, 120, 110), "warn": (220, 190, 100),
+        "level_low": (110, 200, 130), "level_mid": (170, 225, 140),
+        "level_hot": (235, 150, 120),
+    },
+    "light-paper": {
+        "bg": (250, 250, 248), "border": (205, 205, 200), "accent": (60, 60, 60),
+        "label": (100, 100, 100), "text": (30, 30, 30), "dim": (150, 150, 148),
+        "ok": (60, 150, 90), "bad": (200, 70, 70), "warn": (190, 140, 40),
+        "level_low": (80, 160, 110), "level_mid": (200, 160, 60),
+        "level_hot": (200, 80, 80),
+    },
+    "light-sky": {
+        "bg": (240, 247, 252), "border": (190, 210, 225), "accent": (50, 110, 160),
+        "label": (80, 130, 175), "text": (30, 50, 70), "dim": (150, 170, 185),
+        "ok": (60, 150, 120), "bad": (200, 80, 90), "warn": (200, 150, 60),
+        "level_low": (90, 170, 200), "level_mid": (200, 170, 80),
+        "level_hot": (205, 90, 95),
+    },
+    "light-sand": {
+        "bg": (250, 247, 240), "border": (215, 205, 185), "accent": (140, 110, 60),
+        "label": (160, 130, 80), "text": (60, 50, 35), "dim": (170, 160, 140),
+        "ok": (110, 150, 90), "bad": (190, 90, 70), "warn": (190, 150, 60),
+        "level_low": (170, 150, 90), "level_mid": (200, 165, 80),
+        "level_hot": (195, 105, 80),
+    },
+    "warm-amber": {
+        "bg": (30, 20, 10), "border": (90, 60, 25), "accent": (245, 180, 70),
+        "label": (210, 160, 80), "text": (250, 235, 210), "dim": (140, 110, 80),
+        "ok": (200, 190, 110), "bad": (230, 110, 80), "warn": (245, 190, 80),
+        "level_low": (220, 170, 70), "level_mid": (245, 195, 90),
+        "level_hot": (240, 110, 70),
+    },
+    "warm-ember": {
+        "bg": (26, 14, 12), "border": (80, 40, 35), "accent": (240, 120, 80),
+        "label": (215, 140, 110), "text": (245, 225, 215), "dim": (140, 95, 85),
+        "ok": (200, 180, 120), "bad": (235, 95, 70), "warn": (240, 160, 70),
+        "level_low": (235, 140, 90), "level_mid": (245, 170, 90),
+        "level_hot": (240, 90, 60),
+    },
+    "warm-clay": {
+        "bg": (245, 235, 225), "border": (210, 185, 165), "accent": (170, 100, 70),
+        "label": (150, 105, 85), "text": (70, 50, 40), "dim": (175, 155, 140),
+        "ok": (130, 150, 105), "bad": (195, 85, 70), "warn": (200, 150, 80),
+        "level_low": (185, 130, 95), "level_mid": (210, 160, 90),
+        "level_hot": (195, 95, 75),
+    },
+}
+
+ALL_THEMES: list[str] = [name for _, names in THEME_FAMILIES for name in names]
+DEFAULT_THEME = "dark-ocean"
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "phone-mic", "tui.conf")
+
+
+def load_theme() -> str:
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip().startswith("theme="):
+                    name = line.split("=", 1)[1].strip()
+                    if name in THEMES:
+                        return name
+    except OSError:
+        pass
+    return DEFAULT_THEME
+
+
+def save_theme(name: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+            handle.write(f"theme={name}\n")
+    except OSError:
+        pass
+
+
+def approx_256(r: int, g: int, b: int) -> int:
+    """Nearest xterm-256 cube colour, for terminals without colour redefinition."""
+    def level(value: int) -> int:
+        return 0 if value < 48 else 1 if value < 115 else 2 if value < 155 \
+            else 3 if value < 195 else 4 if value < 235 else 5
+    return 16 + 36 * level(r) + 6 * level(g) + level(b)
+
+
+class Palette:
+    """Maps roles to curses attributes for the active theme."""
+
+    def __init__(self) -> None:
+        self.name = DEFAULT_THEME
+        self.attrs: dict[str, int] = {}
+        self.exact = False
+        self.enabled = False
+
+    def apply(self, name: str) -> None:
+        theme = THEMES.get(name, THEMES[DEFAULT_THEME])
+        self.name = name if name in THEMES else DEFAULT_THEME
+        self.attrs = {}
+        if not curses.has_colors():
+            return
+        self.enabled = True
+        curses.start_color()
+        curses.use_default_colors()
+        self.exact = bool(curses.can_change_color() and curses.COLORS >= 256)
+
+        indices: dict[str, int] = {}
+        for i, role in enumerate(ROLES):
+            r, g, b = theme[role]
+            if self.exact:
+                index = 16 + i
+                curses.init_color(index, r * 1000 // 255, g * 1000 // 255,
+                                  b * 1000 // 255)
+            else:
+                index = approx_256(r, g, b)
+            indices[role] = index
+
+        bg = indices["bg"]
+        for i, role in enumerate(ROLES):
+            pair = 40 + i
+            curses.init_pair(pair, indices[role], bg)
+            self.attrs[role] = curses.color_pair(pair)
+
+    def a(self, role: str) -> int:
+        return self.attrs.get(role, 0)
+
+
+PALETTE = Palette()
+
+
 # --------------------------------------------------------------------------- state
 
 def run(cmd: list[str], timeout: float = 3.0) -> str:
@@ -365,36 +547,27 @@ def interactive() -> int:
     def draw(stdscr) -> None:
         curses.curs_set(0)
         stdscr.timeout(120)
-        has_colors = curses.has_colors()
-        if has_colors:
-            curses.start_color()
-            curses.use_default_colors()
-            curses.init_pair(1, curses.COLOR_GREEN, -1)
-            curses.init_pair(2, curses.COLOR_RED, -1)
-            curses.init_pair(3, curses.COLOR_YELLOW, -1)
-            curses.init_pair(4, curses.COLOR_CYAN, -1)
+        PALETTE.apply(PALETTE.name)
 
         def tone(kind: str) -> int:
-            if not has_colors:
-                return 0
-            return {
-                "ok": curses.color_pair(1),
-                "bad": curses.color_pair(2),
-                "warn": curses.color_pair(3),
-                "accent": curses.color_pair(4) | curses.A_BOLD,
-                "dim": curses.A_DIM,
-                "plain": 0,
-                "label": curses.color_pair(4),
-            }.get(kind, 0)
+            if not PALETTE.enabled:
+                return curses.A_BOLD if kind == "accent" else 0
+            role = {"ok": "ok", "bad": "bad", "warn": "warn", "accent": "accent",
+                    "dim": "dim", "plain": "text", "label": "label",
+                    "border": "border"}.get(kind, "text")
+            attr = PALETTE.a(role)
+            if kind == "accent":
+                attr |= curses.A_BOLD
+            return attr
 
         def level_tone(db: float) -> int:
-            if not has_colors:
+            if not PALETTE.enabled:
                 return 0
             if db >= -6:
-                return curses.color_pair(2)
+                return PALETTE.a("level_hot")
             if db >= -18:
-                return curses.color_pair(3)
-            return curses.color_pair(1)
+                return PALETTE.a("level_mid")
+            return PALETTE.a("level_low")
 
         meter = LevelMeter()
         meter.start()
@@ -403,6 +576,8 @@ def interactive() -> int:
         message = ""
         message_at = 0.0
         show_devices = False
+        picker = False
+        picker_sel = ALL_THEMES.index(PALETTE.name)
 
         def say(text: str) -> None:
             nonlocal message, message_at
@@ -446,9 +621,17 @@ def interactive() -> int:
                     pass
 
             def frame_row(row: int, lc: str, rc: str, fill: str = H) -> None:
-                put(row, left, lc + fill * inner + rc, tone("dim"))
+                put(row, left, lc + fill * inner + rc, tone("border"))
 
             # --- frame and header (rows 0..3) ------------------------------
+            if PALETTE.enabled:
+                bg_attr = PALETTE.a("bg")
+                blank = " " * frame_w
+                for row in range(frame_h):
+                    try:
+                        stdscr.addstr(top + row, left, blank, bg_attr)
+                    except curses.error:
+                        pass
             frame_row(0, TL, TR)
             put(1, left + 3, "◉ PHONE-MIC", tone("accent"))
             put(1, left + frame_w - 19, "PIPEWIRE · ADB", tone("dim"))
@@ -458,7 +641,7 @@ def interactive() -> int:
             def edge(row: int, col: int) -> None:
                 """One border cell: put() would clip it at the frame edge."""
                 try:
-                    stdscr.addstr(top + row, col, V, tone("dim"))
+                    stdscr.addstr(top + row, col, V, tone("border"))
                 except curses.error:
                     pass
 
@@ -484,8 +667,8 @@ def interactive() -> int:
             panel_h = 9
             put(panel_y - 1 + 0, left_x, "PHONE LINK", tone("label"))
             put(panel_y - 1 + 0, right_x, "INPUT MONITOR", tone("label"))
-            draw_box(stdscr, top + panel_y, left_x, panel_h, col_w, color=tone("dim"))
-            draw_box(stdscr, top + panel_y, right_x, panel_h, col_w, color=tone("dim"))
+            draw_box(stdscr, top + panel_y, left_x, panel_h, col_w, color=tone("border"))
+            draw_box(stdscr, top + panel_y, right_x, panel_h, col_w, color=tone("border"))
 
             conn = connection_lines(devices)
             for i, (label, value, kind) in enumerate(conn):
@@ -514,7 +697,7 @@ def interactive() -> int:
             mic_y = panel_y + panel_h + 2
             mic_w = inner - 2 * margin
             put(mic_y - 1, left_x, "VIRTUAL MICROPHONE", tone("label"))
-            draw_box(stdscr, top + mic_y, left_x, 6, mic_w, color=tone("dim"))
+            draw_box(stdscr, top + mic_y, left_x, 6, mic_w, color=tone("border"))
 
             alive = bool(pids) and state == "active"
             if muted:
@@ -547,13 +730,39 @@ def interactive() -> int:
             # --- footer (rows 23..26) -------------------------------------
             frame_row(frame_h - 4, TEE_L, TEE_R)
             put(frame_h - 3, left + 3,
-                "[C] Connect  [X] Stop  [M] Mute  [A] Reroute  [D] Devices  [Q] Quit",
+                "[C] Connect [X] Stop [M] Mute [A] Reroute [T] Theme [D] Devices [Q] Quit",
                 tone("dim"))
             put(frame_h - 2, left + 3,
                 f"[Tab] gain/volume  [←→] ±5%   ·   focus {focus}", tone("dim"))
             if message and time.monotonic() - message_at < 6:
                 put(frame_h - 2, left + 3 + 42, message, tone("warn"))
             frame_row(frame_h - 1, BL, BR)
+
+            if picker:
+                rows_total = len(ALL_THEMES) + len(THEME_FAMILIES) + 4
+                pw = min(inner - 6, 40)
+                ph = min(rows_total, frame_h - 4)
+                py = max(1, top + (frame_h - ph) // 2)
+                px = left + (frame_w - pw) // 2
+                draw_box(stdscr, py, px, ph, pw, color=tone("accent"))
+                put(py, px + 2, " THEME ", tone("accent"))
+                row = py + 1
+                index = 0
+                for family, names in THEME_FAMILIES:
+                    if row >= py + ph - 2:
+                        break
+                    put(row, px + 2, family, tone("label"))
+                    row += 1
+                    for name in names:
+                        if row >= py + ph - 2:
+                            break
+                        marker = "●" if index == picker_sel else " "
+                        attr = (PALETTE.a("accent") | curses.A_BOLD
+                                if index == picker_sel else tone("plain"))
+                        put(row, px + 4, f"{marker} {name}", attr)
+                        row += 1
+                        index += 1
+                put(py + ph - 2, px + 2, "↵ apply · esc close", tone("dim"))
 
             if show_devices:
                 rows = [line.split()[1] for line in
@@ -588,7 +797,8 @@ def interactive() -> int:
                 try:
                     with open(dump, "w", encoding="utf-8") as handle:
                         handle.write(f"# curses {curses.COLS}x{curses.LINES} "
-                                     f"frame {frame_w}x{frame_h} left {left}\n")
+                                     f"frame {frame_w}x{frame_h} left {left} "
+                                     f"theme {PALETTE.name} exact {PALETTE.exact}\n")
                         handle.write("\n".join(line.rstrip() for line in lines) + "\n")
                 except OSError:
                     pass
@@ -596,6 +806,19 @@ def interactive() -> int:
                 return
 
             ch = stdscr.getch()
+            if picker:
+                if ch in (curses.KEY_UP, ord("k")):
+                    picker_sel = (picker_sel - 1) % len(ALL_THEMES)
+                elif ch in (curses.KEY_DOWN, ord("j")):
+                    picker_sel = (picker_sel + 1) % len(ALL_THEMES)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    PALETTE.apply(ALL_THEMES[picker_sel])
+                    save_theme(ALL_THEMES[picker_sel])
+                    picker = False
+                    say(f"tema: {ALL_THEMES[picker_sel]}")
+                elif ch in (27, ord("t"), ord("T"), ord("q"), ord("Q")):
+                    picker = False
+                continue
             if show_devices and ch != -1:
                 show_devices = False
                 continue
@@ -612,6 +835,9 @@ def interactive() -> int:
                 say(toggle_mute()[1])
             elif ch in (ord("a"), ord("A")):
                 say(fix_routing()[1])
+            elif ch in (ord("t"), ord("T")):
+                picker_sel = ALL_THEMES.index(PALETTE.name)
+                picker = True
             elif ch in (ord("d"), ord("D")):
                 show_devices = True
             elif ch in (ord("r"), ord("R")):
@@ -685,7 +911,11 @@ def main() -> int:
                         help="default: tui")
     parser.add_argument("--once", action="store_true",
                         help="print one snapshot and exit (same as 'status')")
+    parser.add_argument("--theme", choices=ALL_THEMES,
+                        help="theme for this run (default: the saved one)")
     args = parser.parse_args()
+
+    PALETTE.name = args.theme or load_theme()
 
     if args.once or args.command == "status":
         return once()
