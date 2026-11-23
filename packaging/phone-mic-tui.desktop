@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Micrófono del teléfono (panel)
-Comment=Panel de estado y control del micrófono del celular
-Exec=/home/swat/Proyectos/phone-mic/tui/phone_mic_tui.py
-Icon=utilities-terminal
-Terminal=true
-Categories=AudioVideo;Audio;
-Keywords=mic;microfono;panel;tui;

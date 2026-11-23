@@ -9,9 +9,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# phone-mic.sh, not scrcpy-mic.sh: it runs connect-phone.sh first, so every
-# restart also reconnects adb (last known port, then mDNS discovery).
-ExecStart=%h/Proyectos/phone-mic/scripts/phone-mic.sh
+# connect first, then forward: every restart reconnects adb (last known port,
+# then mDNS discovery) before resuming audio. Chained here so the bridge needs no
+# desktop launcher.
+ExecStart=/bin/sh -c '%h/Proyectos/phone-mic/scripts/connect-phone.sh && exec %h/Proyectos/phone-mic/scripts/scrcpy-mic.sh' 
 # A dropped adb link, a phone that went to sleep or a scrcpy crash all end this
 # process; restarting runs scripts/connect-phone.sh again, which retries the last
 # known port and then discovers the advertised service over mDNS.

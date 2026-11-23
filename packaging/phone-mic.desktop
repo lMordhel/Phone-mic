@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Micrófono del teléfono
-Comment=Activar el micrófono del celular como entrada Phone-Mic (el puente corre como servicio)
-Exec=/home/swat/Proyectos/phone-mic/scripts/menu-start.sh
-Icon=audio-input-microphone
-Terminal=false
-Categories=AudioVideo;Audio;
-Keywords=mic;microfono;telefono;phone;

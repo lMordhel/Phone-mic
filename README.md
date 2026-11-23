@@ -93,8 +93,8 @@ systemctl --user status phone-micd
 
 ## Daily use
 
-One click: **Micrófono del teléfono** in the application menu, or `phone-mic` in a
-terminal for the panel (keys `i` start, `d` stop).
+There is no desktop app: the project is terminal-only. Run `phone-mic` for the panel
+with `i` to start and `d` to stop.
 
 Both talk to the `phone-mic-bridge` **systemd user service**, which owns the
 forwarding process:
@@ -129,8 +129,8 @@ From a terminal:
 
 ```bash
 cd Phone-mic
-./scripts/phone-mic.sh          # connect + forward
-./scripts/connect-phone.sh PORT # only reconnect, using the port the phone shows
+./scripts/connect-phone.sh PORT # reconnect adb using the port the phone shows
+./scripts/scrcpy-mic.sh         # forward only (adb must already be connected)
 ```
 
 Then pick **`Phone-Mic`** as the input device:
@@ -184,7 +184,7 @@ phone-mic  panel del microfono del telefono
 The panel owns no audio: closing it never cuts the microphone. Quitting is safe by
 design, which is why it does not ask for confirmation.
 
-It is also in the application menu as **Micrófono del teléfono (panel)**.
+The project ships no desktop entry by design: `phone-mic` in a terminal is the only entry point.
 
 ## After a reboot
 
@@ -193,7 +193,7 @@ It is also in the application menu as **Micrófono del teléfono (panel)**.
 | `phone-micd` service | yes, `enabled` |
 | `Phone-Mic` virtual device | yes, PipeWire configuration |
 | adb connection | no, the bridge service reconnects automatically once started |
-| `scrcpy` forwarding | no, start the bridge: menu entry or `phone-mic start` |
+| `scrcpy` forwarding | no, start it with `phone-mic start` |
 
 With a USB cable instead of Wi-Fi there is nothing to reconnect: `adb` finds the
 device by itself.
@@ -217,7 +217,7 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `Phone-Mic` listed but silent | scrcpy recreated its stream on the default sink | use `scripts/phone-mic.sh`; its watchdog moves the stream back within a second |
+| `Phone-Mic` listed but silent | scrcpy recreated its stream on the default sink | press `a` in `phone-mic`, or the watchdog in `scripts/scrcpy-mic.sh` fixes it within a second |
 | You hear your own voice | the microphone test page plays your recording back | close the test page; the chain has no microphone-to-headphones path |
 | Audible delay | scrcpy buffers 200 ms by default | the wrapper already uses 50 ms; lower it or use USB |
 | `Phone-Mic` missing from a dropdown | the application cached its device list | restart the application |
@@ -251,7 +251,6 @@ format is documented in [PROTOCOL.md](PROTOCOL.md).
 systemctl --user disable --now phone-micd
 rm ~/.local/bin/phone-micd ~/.config/systemd/user/phone-micd.service \
    ~/.config/pipewire/pipewire.conf.d/60-phone-mic.conf \
-   ~/.local/share/applications/phone-mic.desktop
 rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
 ```
 
