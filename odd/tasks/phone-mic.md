@@ -20,7 +20,7 @@ S6. The existing Bluetooth headset (M07) must keep working as the audio output w
 
 | ID | Spec | Route | Commit | Status |
 | --- | --- | --- | --- | --- |
-| T1 | S1, S4 | inline (C + libpipewire + libopus) | pending | open |
+| T1 | S1, S4 | inline (C + libpipewire + libopus) | 6b94e3e | done |
 | T2 | S1, S3 | inline (Kotlin, needs Android toolchain) | - | pending |
 | T3 | S1 | inline (mDNS discovery via avahi) | - | pending |
 | T4 | S1, S6 | inline (reconnect, silence, metrics) | - | pending |
@@ -59,3 +59,16 @@ runtime), python3 3.14, avahi active, no Java/Gradle/Android SDK, 17 GB free on 
 L5 (evidence, prior attempt): the WO Mic virtual source was technically sound (PipeWire exposed it and OBS listed it); the
 observable failure was the M07 headset dropping its Bluetooth link and a stale `default.configured.audio.source.0=womic_mic`
 entry, which is why S1 names the enumeration requirement explicitly and T4 covers reconnection.
+
+L6 (evidence, T1 verified): the remap source `phone_mic` is listed by `pactl` and by `gst-device-monitor-1.0
+Audio/Source` as `Audio/Source` with `node.description = Phone-Mic` and `device.class = filter`. End-to-end capture
+of `pm-send` measured -10.5 dB max for raw S16LE and -9.6 dB max for Opus against a 0.3 amplitude sine, with 0 lost
+and 0 malformed packets; underruns stayed at 2/100 and 7/248 packets because idle silence no longer counts as starvation.
+
+L7 (decision): the exposed node is named `Phone-Mic` with a hyphen, not `Phone Mic`. `pactl`'s proplist parser
+splits on whitespace, so a space truncates `device.description` to its first word; the hyphen keeps the runtime
+`module-remap-source` path and the persistent PipeWire configuration byte-identical.
+
+L8 (evidence): the virtual microphone is loaded in the live session with `pactl` and not by restarting PipeWire,
+because a restart drops the M07 Bluetooth link and the Hyprland screencast session (S6, and the incident recorded
+in L5).
