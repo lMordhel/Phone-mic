@@ -88,3 +88,12 @@ screen), then `adb connect 192.168.100.57:40735` against Redmi Note 13 (23129RA5
 --audio-source=mic` works, but `PULSE_SINK` is ignored because scrcpy plays through SDL, so its stream is created on the
 default sink and must be moved with `pactl move-sink-input`. After the move, sink-input 1181 sat on phonemic_sink and a
 6 s capture from phone_mic measured -1.8 dB max / -37.9 dB mean, i.e. real phone audio in the virtual microphone.
+
+L12 (evidence, routing is not sticky): scrcpy recreated its audio stream (1181 -> 1262/1460) and the new stream was
+born on the default sink again, which is why the user saw Phone-Mic but heard silence: the audio was leaving through the
+M07 headphones. Fix: the wrapper now keeps a watchdog that moves any scrcpy stream back to phonemic_sink every second.
+Verified by moving the stream to bluez_output.FC_9D_CF_FC_86_77.1 by hand: it returned to phonemic_sink in under 2 s,
+and a capture from phone_mic measured -14.5 dB max.
+
+L13 (evidence, "I hear myself"): the playback stream on the headphones was Brave playing the microphone test page back,
+not a routing loop in the phone-mic chain.
