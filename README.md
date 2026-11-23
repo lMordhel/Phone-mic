@@ -28,6 +28,7 @@ telemetry to something that should be a local audio device.
 | Linux receiver `phone-micd` (UDP + Opus decoder + jitter buffer) | **working**, tested |
 | systemd user service + installer | **working**, tested |
 | Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested |
+| Terminal panel (`tui/phone_mic_tui.py`) | **working**, tested |
 | Native Android app (Kotlin + UDP, no adb) | planned, see [Roadmap](#roadmap) |
 
 Two phone paths exist today:
@@ -115,6 +116,38 @@ Then pick **`Phone-Mic`** as the input device:
 Both Discord and OBS ignore the system default, so they need the device selected
 explicitly. They also cache the device list at startup: if `Phone-Mic` is missing
 from the dropdown, restart the application.
+
+## Terminal panel
+
+```bash
+./tui/phone_mic_tui.py          # interactive panel
+./tui/phone_mic_tui.py --once   # one snapshot, scriptable
+```
+
+```
+phone-mic  panel del microfono del telefono
+  receiver service   running
+  virtual device     phonemic_sink / phone_mic
+  phone (adb)        192.168.100.57:40735
+  bridge             forwarding (pid 63115), routing ok
+  audio              peak -6.2 dB   rms -24.3 dB
+  nivel  [###################---------]   -6.2 dB
+  i iniciar   d detener   r reconectar   a arreglar ruta   m medidor   q salir
+```
+
+| Key | Action |
+| --- | --- |
+| `i` | start the bridge (connect + forward) |
+| `d` | stop forwarding |
+| `r` | reconnect adb (asks nothing; reports what it found) |
+| `a` | move the bridge stream back to the virtual sink |
+| `m` | toggle the level meter (it opens its own capture client) |
+| `q` | quit (the bridge keeps running) |
+
+The panel owns no audio: closing it never cuts the microphone. Quitting is safe by
+design, which is why it does not ask for confirmation.
+
+It is also in the application menu as **Micrófono del teléfono (panel)**.
 
 ## After a reboot
 

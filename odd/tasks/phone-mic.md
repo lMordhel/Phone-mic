@@ -111,3 +111,8 @@ both survive a reboot. The adb connection and the scrcpy bridge do not. `scripts
 last working port (saved in ~/.local/state/phone-mic), then adb mDNS, then avahi, and only then asks the user for the
 port. `scripts/phone-mic.sh` chains connect + forwarding and is wired to a desktop entry, so the daily action is one click.
 Verified: with the device connected the script reports "already connected" and exits without touching the session.
+
+L17 (evidence, terminal panel): `tui/phone_mic_tui.py` renders the real state (service, virtual device, adb peer, bridge
+pid and routing, level meter) and exposes start/stop/reconnect/re-route/meter keys. Verified with `--once` (snapshot
+against the live session) and by running it under a pseudo-terminal: it renders and the meter bar fills as audio arrives.
+The panel owns no audio path, so quitting it does not cut the microphone.
