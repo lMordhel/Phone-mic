@@ -260,6 +260,77 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(tui.bridge_stream().index, "42")
 
 
+class MeterStateTest(unittest.TestCase):
+    """S2/S3: no capture, not started yet and real silence never look alike."""
+
+    def test_missing_capture_tool_says_so_and_has_no_level(self):
+        state = tui.meter_state(False, False, 0, None)
+        self.assertEqual(state.word, "NO CAPTURE TOOL")
+        self.assertIsNone(state.level)
+        self.assertFalse(state.measuring)
+
+    def test_capture_not_started_is_no_signal(self):
+        state = tui.meter_state(True, False, 0, None)
+        self.assertEqual(state.word, "NO SIGNAL")
+        self.assertIsNone(state.level)
+        self.assertFalse(state.measuring)
+
+    def test_started_but_no_window_yet_is_no_signal(self):
+        state = tui.meter_state(True, True, 0, None)
+        self.assertEqual(state.word, "NO SIGNAL")
+        self.assertIsNone(state.level)
+        self.assertFalse(state.measuring)
+
+    def test_measured_floor_is_a_real_reading(self):
+        # S3: a running capture that measures silence shows its measured value.
+        state = tui.meter_state(True, True, 5, tui.FLOOR_DB)
+        self.assertTrue(state.measuring)
+        self.assertEqual(state.word, "")
+        self.assertEqual(state.level, tui.FLOOR_DB)
+
+    def test_measured_level_above_the_floor(self):
+        state = tui.meter_state(True, True, 5, -12.5)
+        self.assertTrue(state.measuring)
+        self.assertEqual(state.level, -12.5)
+
+    def test_a_stopped_capture_is_not_a_reading(self):
+        # The last window of a capture that died is history, not a measurement.
+        state = tui.meter_state(True, False, 5, -12.5)
+        self.assertFalse(state.measuring)
+        self.assertEqual(state.word, "NO SIGNAL")
+        self.assertIsNone(state.level)
+
+    def test_a_running_capture_without_a_peak_is_unknown(self):
+        state = tui.meter_state(True, True, 3, None)
+        self.assertFalse(state.measuring)
+        self.assertIsNone(state.level)
+
+    def test_no_capture_level_renders_as_the_dash_not_the_floor(self):
+        # S2: through the existing formatter the column shows —, never -60.0 dB.
+        state = tui.meter_state(False, False, 0, None)
+        self.assertEqual(
+            tui.fmt_value(state.level, "5.1f", " dB", 8), "—       ")
+
+    def test_renderer_rows_are_blank_when_nothing_was_measured(self):
+        # An all-floor bar is exactly what a silent room looks like: blank it.
+        state = tui.meter_state(False, False, 0, None)
+        self.assertEqual(tui.wave_row(state, [tui.FLOOR_DB] * 4, 10), " " * 10)
+        self.assertEqual(tui.level_row(state, 20), " " * 20)
+
+    def test_renderer_rows_keep_their_geometry_when_measuring(self):
+        state = tui.meter_state(True, True, 5, tui.FLOOR_DB)
+        self.assertEqual(len(tui.wave_row(state, [tui.FLOOR_DB] * 4, 10)), 10)
+        self.assertEqual(tui.level_row(state, 20), "░" * 20)
+
+    def test_a_measured_capture_renders_exactly_the_old_rows(self):
+        # PRESERVE: when the capture is real, the panel draws what it always did.
+        state = tui.meter_state(True, True, 5, -13.9)
+        slots = [-60.0, -40.0, -20.0, -13.9]
+        self.assertEqual(tui.wave_row(state, slots, 10),
+                         tui.wave_line(slots, 10))
+        self.assertEqual(tui.level_row(state, 20), tui.level_bar(-13.9, 20))
+
+
 class UnknownFormatTest(unittest.TestCase):
     """S2: an unreadable value renders as an em dash, never as a number."""
 

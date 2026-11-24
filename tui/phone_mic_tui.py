@@ -40,6 +40,9 @@ WAVE_CHARS = " ▁▂▃▄▅▆▇"
 
 UNKNOWN = "—"            # S2: an unreadable value is shown as a dash, not as 0
 
+NO_CAPTURE_TOOL = "NO CAPTURE TOOL"   # parec missing: nothing can be captured
+NO_SIGNAL = "NO SIGNAL"               # no window measured: nothing is captured
+
 FRAME_MIN_W = 62
 FRAME_W = 78
 FRAME_H = 27
@@ -537,6 +540,34 @@ def fix_routing() -> tuple[bool, str]:
 
 # --------------------------------------------------------------------------- meter
 
+class MeterState(NamedTuple):
+    """What the INPUT MONITOR may truthfully say about the capture (S2, S3).
+
+    `measuring` is the only licence to draw a level: when it is false the level
+    is None and the panel must print `—`, never a floor value that a silent room
+    would also produce. `word` names the situation in words when not measuring.
+    """
+    measuring: bool
+    word: str
+    level: float | None
+
+
+def meter_state(available: bool, running: bool, windows: int,
+                peak: float | None) -> MeterState:
+    """Decide the meter state from facts only: no capture, not started, or real.
+
+    Three situations must never look alike: `parec` missing (nothing can be
+    captured), a capture with no window yet or no longer running (nothing is
+    being captured), and a running capture, whose measured value is data even
+    when it sits at FLOOR_DB.
+    """
+    if not available:
+        return MeterState(False, NO_CAPTURE_TOOL, None)
+    if not running or windows <= 0 or peak is None:
+        return MeterState(False, NO_SIGNAL, None)
+    return MeterState(True, "", peak)
+
+
 class LevelMeter(threading.Thread):
     """Rolling windows of the virtual microphone, for the waveform and the level."""
 
@@ -544,15 +575,19 @@ class LevelMeter(threading.Thread):
         super().__init__(daemon=True)
         self._stop = threading.Event()
         self._proc: subprocess.Popen[bytes] | None = None
+        # Whether a capture tool exists at all: the meter cannot report a
+        # measurement it has no tool to take (S3). Read before the thread runs.
+        self.available = shutil.which("parec") is not None
         self.slots: collections.deque[float] = collections.deque(
             [FLOOR_DB] * WAVE_SLOTS, maxlen=WAVE_SLOTS)
-        self.peak_db = FLOOR_DB
-        self.rms_db = FLOOR_DB
+        # None, not the floor: nothing has been measured until a window is read.
+        self.peak_db: float | None = None
+        self.rms_db: float | None = None
         self.windows = 0
         self.running = False
 
     def run(self) -> None:
-        if not shutil.which("parec"):
+        if not self.available:
             return
         window_bytes = SAMPLE_RATE * BAR_WINDOW_MS // 1000 * 2
         try:
@@ -613,6 +648,20 @@ def wave_line(slots: list[float], width: int) -> str:
         index = int(round(db_fraction(db) * (len(WAVE_CHARS) - 1)))
         out.append(WAVE_CHARS[max(0, min(len(WAVE_CHARS) - 1, index))])
     return "".join(out)
+
+
+def wave_row(state: MeterState, slots: list[float], width: int) -> str:
+    """Waveform row for a state: blank when nothing was measured (S2, S3).
+
+    A floor-filled bar is exactly what a silent room renders, so it must never
+    stand in for a missing measurement; the width is the same either way.
+    """
+    return wave_line(slots, width) if state.measuring else " " * width
+
+
+def level_row(state: MeterState, width: int) -> str:
+    """Level bar row for a state: blank when nothing was measured (S2, S3)."""
+    return level_bar(state.level, width) if state.measuring else " " * width
 
 
 def level_bar(db: float, width: int) -> str:
@@ -806,16 +855,25 @@ def interactive() -> int:
                 tone("ok") if routing_ok else tone("bad"))
 
             wave_w = max(8, col_w - 6)
+            # One decision, taken from facts: never draw a level nobody measured
+            # and never hide a measured floor (S2, S3).
+            capture = meter_state(meter.available, meter.running, meter.windows,
+                                 meter.peak_db)
             slots = meter.snapshot()
-            peak = meter.peak_db
-            put(panel_y + 2, right_x + 2, wave_line(slots, wave_w), level_tone(peak))
+            bar_tone = (level_tone(capture.level) if capture.measuring
+                        else tone("dim"))
+            put(panel_y + 2, right_x + 2, wave_row(capture, slots, wave_w), bar_tone)
             put(panel_y + 4, right_x + 2, "INPUT LEVEL", tone("dim"))
+            if capture.word:
+                put(panel_y + 4, right_x + 2 + len("INPUT LEVEL") + 2,
+                    capture.word, tone("warn"))
             bar_w = max(6, wave_w - 11)
-            put(panel_y + 5, right_x + 2, level_bar(peak, bar_w), level_tone(peak))
+            put(panel_y + 5, right_x + 2, level_row(capture, bar_w), bar_tone)
             put(panel_y + 5, right_x + 2 + bar_w + 1,
-                fmt_value(peak, "5.1f", " dB", 8), tone("plain"))
+                fmt_value(capture.level, "5.1f", " dB", 8), tone("plain"))
+            rms = meter.rms_db if capture.measuring else None
             put(panel_y + 6, right_x + 2,
-                f"RMS {fmt_value(meter.rms_db, '5.1f', ' dB', 8)}   "
+                f"RMS {fmt_value(rms, '5.1f', ' dB', 8)}   "
                 f"buffer {buffer_ms} ms", tone("dim"))
 
             # --- virtual microphone (rows 16..21) -------------------------
@@ -1012,8 +1070,10 @@ def once() -> int:
     volume = source_volume()
     stream_gain = stream_volume()
     muted = source_muted()
+    # The same decision the panel takes, from the same helper (S2, S3).
+    capture = meter_state(meter.available, meter.running, meter.windows,
+                          meter.peak_db)
     slots = meter.snapshot()
-    peak = meter.peak_db
     meter.stop()
 
     width = 62
@@ -1029,9 +1089,10 @@ def once() -> int:
     for label, value, kind in connection_lines(devices):
         row(f"   ● {value}" if label == "state" else f"     {label:<10} {value}")
     row("")
-    row("  INPUT MONITOR")
-    row("   " + wave_line(slots, width - 6))
-    row("   " + level_bar(peak, 20) + " " + fmt_value(peak, "5.1f", " dB"))
+    row("  INPUT MONITOR" + (f"   {capture.word}" if capture.word else ""))
+    row("   " + wave_row(capture, slots, width - 6))
+    row("   " + level_row(capture, 20) + " "
+        + fmt_value(capture.level, "5.1f", " dB"))
     row("")
     row("  VIRTUAL MICROPHONE")
     alive = bool(pids) and state == "active"
