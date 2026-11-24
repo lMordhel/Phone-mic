@@ -50,7 +50,7 @@ ck "R2b pipewire parses the fragment" r2b
 
 r3() { # R3: the unit is templated, loads the source first, keeps its directives
     local u="$ROOT/packaging/phone-mic-bridge.service"
-    grep -qx 'ExecStartPre=@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh' "$u" &&
+    grep -qx 'ExecStartPre="@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh"' "$u" &&
     ! grep -q '%h/' "$u" &&
     grep -qF 's|@PHONE_MIC_ROOT@|$HERE|g' "$ROOT/packaging/install.sh" &&
     grep -qx 'After=pipewire.service wireplumber.service pipewire-pulse.service' "$u" &&
@@ -84,7 +84,7 @@ SH
     env -i PATH="$T/b:/usr/bin:/bin" HOME="$T/home" TMPDIR="$T" \
         bash "$ROOT/packaging/install.sh" >/dev/null 2>"$T/err" &&
     grep -q 'the audio server does not answer' "$T/err" &&
-    grep -qF "ExecStartPre=$ROOT/scripts/load-virtual-mic.sh" \
+    grep -qF "ExecStartPre=\"$ROOT/scripts/load-virtual-mic.sh\"" \
         "$T/home/.config/systemd/user/phone-mic-bridge.service" &&
     ! grep -q '@PHONE_MIC_ROOT@' "$T/home/.config/systemd/user/phone-mic-bridge.service"; }
 ck "R4b dead audio server: install still succeeds and templates the unit" r4b

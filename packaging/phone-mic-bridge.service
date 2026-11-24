@@ -22,7 +22,10 @@ Type=simple
 # checkout actually lives in. Never hardcode a path here: a wrong one fails
 # ExecStartPre before the bridge starts, and a bridge that cannot start never
 # creates phone_mic, so the microphone disappears with no audio error to point at.
-ExecStartPre=@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh
+# Quoted on purpose: install.sh substitutes an absolute path, and systemd splits
+# an unquoted Exec line on whitespace, so a checkout under a directory with a
+# space would fail before the bridge starts.
+ExecStartPre="@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh"
 # connect first, then forward: every restart reconnects adb (last known port,
 # then mDNS discovery) before resuming audio. Chained here so the bridge needs no
 # desktop launcher.
