@@ -213,10 +213,16 @@ colours), not a single accent colour.
 phone-mic --theme warm-ember     # one run, without changing the saved theme
 ```
 
-Colours are defined with `curses.init_color`, so the palettes are exact RGB on
-terminals that allow colour redefinition (kitty, foot, alacritty). Where that is not
-available the palette is approximated with the nearest xterm-256 cube colours, so
-themes still change but with less fidelity.
+By default the palettes are drawn from the nearest xterm-256 cube colours, so a
+theme looks the same on every terminal. `PHONE_MIC_EXACT=1` instead redefines the
+terminal's own palette with `curses.init_color`: exact RGB where the terminal
+honours it (kitty, foot, alacritty), but identical-looking themes where the
+terminal advertises the capability and silently ignores it. That is why the cube
+is the default.
+
+The picker previews while you move with `j`/`k`, `Enter` applies and saves it, and
+`esc` or `t` closes it and restores the saved theme. `phone-mic status` prints the
+active theme on its last line.
 
 What each reading means:
 
@@ -277,9 +283,9 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 | Clicky or choppy audio | buffer too low for the network | raise `AUDIO_BUFFER` |
 | Bridge stuck retrying | the phone is unreachable or wireless debugging is off | `phone-mic status`, then check the phone |
 | No audio anywhere in the system, `pactl` says `Connection refused` | a fragment in `pipewire.conf.d` asks for a module this system does not ship, and the mandatory load aborted the daemon | remove that entry, then `systemctl --user reset-failed pipewire` and start it again |
-| Panel shows `ACTIVATING`, `GAIN 0%`, `-60.0 dB` | PipeWire is not running: those zeros are failed `pactl` reads, not real values | `journalctl --user -u pipewire -n 20`; the panel is not the source of truth |
+| Panel shows `AUDIO SERVER DOWN` and `GAIN —` | the audio server does not answer; the panel names that state instead of printing a reading it could not take | run the command the panel prints (`systemctl --user restart pipewire-pulse`), then `journalctl --user -u pipewire -n 20` |
 | `phone_mic` missing after a reboot | the remap source is created at runtime, not by the configuration | `systemctl --user restart phone-mic-bridge` |
-| Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph | normal; the panel fills once the capture is running |
+| Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph and the panel prints `NO SIGNAL` until the first window arrives | normal; it fills once the capture is running |
 
 ## Uninstall
 
