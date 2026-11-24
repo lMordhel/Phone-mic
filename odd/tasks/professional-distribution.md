@@ -51,11 +51,14 @@ One line per task: ID, specs, route, commit.
   `feat(packaging): check the environment before installing` — done, `0060890`.
 - T4 — `packaging/tests/install-smoke.sh`: install into a temporary HOME, assert
   the prefix layout, the generated unit and `--version`, then uninstall and
-  assert nothing of ours remains. S2 S6. worker. — parked by L6.
-  `test(packaging): prove a clean install and uninstall`
+  assert nothing of ours remains. S2 S6. worker. — dropped: superseded. R6, R7,
+  R8, R11 and R12 in `packaging/tests/packaging-static.sh` already prove a
+  self-contained install, idempotency, `--version`/`--help`, an uninstall that
+  removes only our files, the marker guard and the substitution escaping. A
+  second file would duplicate them.
 - T5 — README: install, compatibility matrix and uninstall from the prefix.
-  S2 S3 S6. worker. — parked by L6.
-  `docs(readme): document the self-contained install`
+  S2 S3 S6. inline. — done, `bbe7ec3`.
+  `docs(readme): document the self-contained install and uninstall`
 
 ## Log
 
@@ -85,7 +88,6 @@ and `design/` work that precedes them.
 
 L6 — owner, verbatim: "claro pero antes de hacer un instaldaor profesional hay que
 pulir el progrma"
-
 L6 reorders priority. Polishing the program comes before reaching the
 professional installer bar. The installer core already delegated (T2, T3) lands
 as the current installation foundation, but T4, T5 and any further install work
