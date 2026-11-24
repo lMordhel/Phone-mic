@@ -72,3 +72,19 @@ keeping the path correct.
 L4 — the owner accepted an incomplete native review of the previous work unit
 (no validator signature) and has not authorized publishing: everything stays
 local on `feat/phone-mic`.
+
+L5 — delivery shape not yet decided. The branch carries roughly 2,900 authored
+lines across 16 commits since `origin/main`, far past a single reviewable slice.
+A natural first boundary already exists: `e051fa7`, `56bcd74`, `f6a988a`,
+`076a046` and `136195c` touch only `conf/`, `packaging/`, `README.md`, `LICENSE`
+and `odd/`, so they can be published as one slice independent of the `site/`
+and `design/` work that precedes them.
+
+L6 — owner, verbatim: "claro pero antes de hacer un instaldaor profesional hay que
+pulir el progrma"
+
+L6 reorders priority. Polishing the program comes before reaching the
+professional installer bar. The installer core already delegated (T2, T3) lands
+as the current installation foundation, but T4, T5 and any further install work
+wait until the polish scope is agreed and delivered. The polish work gets its own
+feature document; it is not silently folded into this one.
