@@ -1,14 +1,21 @@
 [Unit]
 Description=phone-mic bridge (phone microphone into Phone-Mic)
 Documentation=file:%h/Proyectos/phone-mic/README.md
-After=pipewire.service wireplumber.service
-Wants=pipewire.service
+After=pipewire.service wireplumber.service pipewire-pulse.service
+Wants=pipewire.service pipewire-pulse.service
 # The phone is not always reachable: retrying forever is the intended behaviour,
 # so the start rate limit must not give up on it.
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+# The remap source (phone_mic) cannot be declared in pipewire.conf.d: the module
+# that implements it is not shipped by pipewire 1.6, and a mandatory module that
+# fails aborts the whole daemon. It is created here through pactl instead, where
+# pipewire-pulse implements it in-process. The script is idempotent, so this costs
+# nothing when the nodes already exist, and it makes a fresh boot work without a
+# manual step: the null sink comes from the configuration, the source comes here.
+ExecStartPre=%h/Proyectos/phone-mic/scripts/load-virtual-mic.sh
 # connect first, then forward: every restart reconnects adb (last known port,
 # then mDNS discovery) before resuming audio. Chained here so the bridge needs no
 # desktop launcher.

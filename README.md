@@ -26,7 +26,7 @@ routed into a PipeWire virtual device. The whole interface is a terminal command
 
 | Part | State |
 | --- | --- |
-| Virtual device (`Phone-Mic`) in PipeWire | **working**, tested |
+| Virtual device (`Phone-Mic`) in PipeWire | **working**, tested; the sink comes from the configuration, the source from `pactl` |
 | Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested, nothing to install on the phone |
 | Terminal panel (`phone-mic`) | **working**, tested |
 | `phone-mic-bridge` systemd user service | **working**, tested, reconnects by itself |
@@ -39,6 +39,10 @@ routed into a PipeWire virtual device. The whole interface is a terminal command
   sudo pacman -S --needed pipewire-audio android-tools scrcpy
   ```
   `scrcpy` must be 3.2 or newer: `--audio-source=mic` appeared in that release.
+- `pipewire-pulse` running. The remap source is created with
+  `pactl load-module`, not by a native PipeWire module: pipewire 1.6 no longer
+  ships `libpipewire-module-remap-source`, so nothing is loaded from
+  `context.modules`.
 - Android phone, Android 11 or newer, on the same network as the PC.
 
 ## Install
@@ -216,7 +220,8 @@ shows a "terminal too small" note instead of drawing a broken frame.
 
 | Piece | Survives a reboot |
 | --- | --- |
-| `Phone-Mic` virtual device | yes, PipeWire configuration |
+| `phonemic_sink` (the sink) | yes, PipeWire reads `60-phone-mic.conf` |
+| `phone_mic` (the source) | no, the bridge service creates it on start |
 | adb connection | no, the bridge service reconnects when started |
 | `scrcpy` forwarding | no, start it with `phone-mic start` |
 
@@ -228,6 +233,8 @@ device by itself.
 | Setting | Where | Default |
 | --- | --- | --- |
 | Virtual sink / source names | `conf/60-phone-mic.conf` | `phonemic_sink` / `phone_mic` |
+| Where the sink is declared | `conf/60-phone-mic.conf` | PipeWire `context.objects` |
+| Where the source is created | `scripts/load-virtual-mic.sh` | the bridge unit's `ExecStartPre` |
 | scrcpy audio buffering | `AUDIO_BUFFER` env var | 50 ms (scrcpy default is 200 ms) |
 | scrcpy SDL output buffer | `AUDIO_OUTPUT_BUFFER` env var | 8 ms |
 | adb endpoint memory | `~/.local/state/phone-mic/` | learned on the first connection |
@@ -250,6 +257,9 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 | Bluetooth headset drops when audio restarts | a PipeWire restart tears down Bluetooth links | never restart PipeWire to apply configuration; use `scripts/load-virtual-mic.sh` |
 | Clicky or choppy audio | buffer too low for the network | raise `AUDIO_BUFFER` |
 | Bridge stuck retrying | the phone is unreachable or wireless debugging is off | `phone-mic status`, then check the phone |
+| No audio anywhere in the system, `pactl` says `Connection refused` | a fragment in `pipewire.conf.d` asks for a module this system does not ship, and the mandatory load aborted the daemon | remove that entry, then `systemctl --user reset-failed pipewire` and start it again |
+| Panel shows `ACTIVATING`, `GAIN 0%`, `-60.0 dB` | PipeWire is not running: those zeros are failed `pactl` reads, not real values | `journalctl --user -u pipewire -n 20`; the panel is not the source of truth |
+| `phone_mic` missing after a reboot | the remap source is created at runtime, not by the configuration | `systemctl --user restart phone-mic-bridge` |
 | Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph | normal; the panel fills once the capture is running |
 
 ## Uninstall

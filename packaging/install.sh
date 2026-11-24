@@ -3,9 +3,10 @@
 # the `phone-mic` terminal command. No root required.
 #
 # What it does NOT do: it never restarts PipeWire (that drops Bluetooth audio
-# links and in-flight screencasts). The virtual device is loaded for the running
-# session through scripts/load-virtual-mic.sh and at the next PipeWire start by
-# the copied configuration file.
+# links and in-flight screencasts). The null sink comes from the copied
+# configuration file at the next PipeWire start; the remap source is created for
+# the running session by scripts/load-virtual-mic.sh, and again on every bridge
+# start by the unit's ExecStartPre.
 set -eu
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,6 +22,20 @@ command -v adb >/dev/null || echo "warning: adb is missing (sudo pacman -S --nee
 echo "== install virtual microphone configuration"
 mkdir -p "$PIPEWIRE_DIR" "$UNIT_DIR" "$BIN_DIR" "$DOC_DIR"
 install -m 0644 "$HERE/conf/60-phone-mic.conf" "$PIPEWIRE_DIR/60-phone-mic.conf"
+
+# A module declared in a pipewire.conf.d fragment is mandatory: if the local
+# PipeWire does not ship it, the daemon refuses to start and the machine is left
+# without audio at all. Never finish an install without checking that the server
+# answers, because the failure is silent here and loud only after a reboot.
+if ! pactl info >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+warning: the audio server does not answer, so no microphone can be created.
+         If audio is dead everywhere, a fragment is asking PipeWire for a module
+         this system does not ship. Recover with:
+           systemctl --user reset-failed pipewire pipewire.socket pipewire-pulse wireplumber
+           systemctl --user start pipewire pipewire-pulse wireplumber
+EOF
+fi
 
 echo "== install the phone-mic command"
 cat > "$BIN_DIR/phone-mic" <<WRAPPER
