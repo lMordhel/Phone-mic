@@ -13,7 +13,19 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 T="$(mktemp -d)" || { echo "cannot create a temporary directory" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 fail=0
-ck() { if "${@:2}"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+# 0 = passed, 77 = skipped because a tool this check needs is absent, else failed.
+# A skipped check must never print "ok": reporting an unexecuted check as a pass is
+# how a suite quietly stops covering anything.
+ck() {
+    local name="$1"; shift
+    local rc=0
+    "$@" || rc=$?
+    case "$rc" in
+        0)  echo "ok   $name" ;;
+        77) echo "skip $name (tool absent)" ;;
+        *)  echo "FAIL $name"; fail=1 ;;
+    esac
+}
 
 # A throwaway user environment: no root, no real systemd, no real audio server.
 mkbin() { # $1 = directory, $2 = exit code of the fake `pactl info`
@@ -62,7 +74,7 @@ PY
 ck "R2 sink fragment is valid SPA-JSON" r2
 
 r2b() { # R2b: pipewire itself accepts the fragment (skipped without pipewire)
-    command -v pw-config >/dev/null || return 0
+    command -v pw-config >/dev/null || return 77
     mkdir -p "$T/h/.config/pipewire/pipewire.conf.d"
     cp "$ROOT/conf/60-phone-mic.conf" "$T/h/.config/pipewire/pipewire.conf.d/"
     env -i PATH=/usr/bin:/bin HOME="$T/h" TMPDIR="$T/h" \
@@ -91,7 +103,7 @@ r4() { # R4: never enabled at login, health check guarded and never fatal
 ck "R4 installer does not enable and guards the health check" r4
 
 r4b() { # R4b: a dead audio server warns but does not abort the install
-    command -v pactl >/dev/null || return 0
+    command -v pactl >/dev/null || return 77
     mkdir -p "$T/b" "$T/home"
     printf '#!/bin/sh\nexit 0\n' > "$T/b/systemctl"
     cat > "$T/b/pactl" <<'SH'
