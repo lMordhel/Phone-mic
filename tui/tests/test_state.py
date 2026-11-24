@@ -909,3 +909,34 @@ class OnceSnapshotTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExactColorPolicyTest(unittest.TestCase):
+    """Whether to redefine the terminal palette, or use the portable 256 cube.
+
+    A terminal can advertise the capability (ccc in terminfo) and silently ignore
+    the redefinition. When that happens every theme renders with the terminal's own
+    colours and they all look alike, which is exactly what the owner reported.
+    An advertised capability is a promise, not proof.
+    """
+
+    def policy(self, can_change, colors, override):
+        import phone_mic_tui as tui
+        return tui.use_exact_redefinition(can_change, colors, override)
+
+    def test_the_capability_alone_does_not_enable_redefinition(self):
+        # The default is the cube, even on a terminal that claims it can redefine.
+        self.assertFalse(self.policy(True, 256, None))
+
+    def test_the_override_enables_it_on_a_capable_terminal(self):
+        self.assertTrue(self.policy(True, 256, "1"))
+
+    def test_the_override_cannot_invent_the_capability(self):
+        self.assertFalse(self.policy(False, 256, "1"))
+        self.assertFalse(self.policy(True, 8, "1"))
+
+    def test_the_override_disables_it(self):
+        self.assertFalse(self.policy(True, 256, "0"))
+
+    def test_an_unknown_override_falls_back_to_the_cube(self):
+        self.assertFalse(self.policy(True, 256, "yes"))

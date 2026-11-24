@@ -210,6 +210,23 @@ def save_theme(name: str) -> None:
         pass
 
 
+def use_exact_redefinition(can_change: bool, colors: int,
+                           override: str | None) -> bool:
+    """Whether to redefine the terminal's palette, or use the portable 256 cube.
+
+    A terminal can advertise the capability (ccc in terminfo) and silently ignore
+    the redefinition. When that happens every theme renders with the terminal's own
+    colours, so every theme looks the same and the choice appears lost. An
+    advertised capability is a promise, not proof: the cube is the default and
+    redefining is opt-in through PHONE_MIC_EXACT=1.
+    """
+    if override == "0":
+        return False
+    if override == "1":
+        return bool(can_change and colors >= 256)
+    return False
+
+
 def approx_256(r: int, g: int, b: int) -> int:
     """Nearest xterm-256 cube colour, for terminals without colour redefinition."""
     def level(value: int) -> int:
@@ -236,7 +253,9 @@ class Palette:
         self.enabled = True
         curses.start_color()
         curses.use_default_colors()
-        self.exact = bool(curses.can_change_color() and curses.COLORS >= 256)
+        self.exact = use_exact_redefinition(
+            curses.can_change_color(), curses.COLORS,
+            os.environ.get("PHONE_MIC_EXACT"))
 
         indices: dict[str, int] = {}
         for i, role in enumerate(ROLES):
@@ -1217,7 +1236,8 @@ def interactive() -> int:
                         put(row, px + 4, f"{marker} {name}", attr)
                         row += 1
                         index += 1
-                put(py + ph - 2, px + 2, "↵ apply · esc close", tone("dim"))
+                put(py + ph - 2, px + 2, "j/k preview · ↵ apply · esc cancel",
+                    tone("dim"))
 
             if show_devices:
                 rows = [line.split()[1] for line in
@@ -1264,14 +1284,19 @@ def interactive() -> int:
             if picker:
                 if ch in (curses.KEY_UP, ord("k")):
                     picker_sel = (picker_sel - 1) % len(ALL_THEMES)
+                    PALETTE.apply(ALL_THEMES[picker_sel])   # preview only
                 elif ch in (curses.KEY_DOWN, ord("j")):
                     picker_sel = (picker_sel + 1) % len(ALL_THEMES)
+                    PALETTE.apply(ALL_THEMES[picker_sel])   # preview only
                 elif ch in (10, 13, curses.KEY_ENTER):
                     PALETTE.apply(ALL_THEMES[picker_sel])
                     save_theme(ALL_THEMES[picker_sel])
                     picker = False
                     say(f"tema: {ALL_THEMES[picker_sel]}")
                 elif ch in (27, ord("t"), ord("T"), ord("q"), ord("Q")):
+                    # Closing without confirming must not keep a preview: restore
+                    # what was saved, or the choice looks applied and is not.
+                    PALETTE.apply(picker_origin)
                     picker = False
                 continue
             if show_devices and ch != -1:
@@ -1292,6 +1317,7 @@ def interactive() -> int:
                 say(fix_routing()[1])
             elif ch in (ord("t"), ord("T")):
                 picker_sel = ALL_THEMES.index(PALETTE.name)
+                picker_origin = PALETTE.name
                 picker = True
             elif ch in (ord("d"), ord("D")):
                 show_devices = True
@@ -1379,6 +1405,7 @@ def once() -> int:
     row("")
     row("  [C] Connect  [X] Stop  [M] Mute  [D] Devices  [Q] Quit")
     print(BL + H * (width - 2) + BR)
+    print(f"  theme {PALETTE.name}")
     return 0
 
 
