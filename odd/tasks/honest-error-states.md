@@ -74,12 +74,16 @@ pipeline as healthy while the source is absent.
   unknown unit state, unknown model. S5. worker.
   `feat(tui): report phone link state honestly`
 - P6 — One source of truth for state: `status` reuses the panel helpers instead
-  of its own copy of the logic. S6. worker.
+  of its own copy of the logic. S6. worker. — done, `18e5d05`.
   `refactor(tui): share state logic between panel and status`
 - P7 — Footer advertises every key the loop handles, including `[R]`, `Tab` and
-  the arrows. S8. inline. `fix(tui): list every handled key in the footer`
+  the arrows. S8. worker. — done, `18e5d05` (shared commit with P6, same file).
+  `fix(tui): list every handled key in the footer`
 - P8 — Theme picker: preview while navigating, Enter applies and saves, `esc`/`t`
-  restores the saved theme, hint names the closing key. S9. inline.
+  restores the saved theme, hint names the closing key. S9. inline. — done,
+  `dde092e`. Also changed the colour policy: the portable 256 cube is the default
+  and redefinition is opt-in through `PHONE_MIC_EXACT=1`, because a terminal can
+  advertise `ccc` and ignore it, which made every theme look identical.
   `fix(tui): never lose a chosen theme`
 - P9 — Recover the virtual source and the audio stream when PipeWire restarts
   under a running bridge, and stop claiming a healthy pipeline while the source
