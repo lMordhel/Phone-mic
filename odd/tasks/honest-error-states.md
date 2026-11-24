@@ -83,7 +83,8 @@ pipeline as healthy while the source is absent.
   `fix(tui): never lose a chosen theme`
 - P9 — Recover the virtual source and the audio stream when PipeWire restarts
   under a running bridge, and stop claiming a healthy pipeline while the source
-  is absent. S10. worker. `fix(bridge): recover when PipeWire restarts`
+  is absent. S10. inline. — done, `1626ff3`.
+  `fix(bridge): recreate the virtual device when PipeWire restarts`
 
 ## Log
 
@@ -135,3 +136,12 @@ while the bridge process stayed alive, so `Restart=always` never fired and the
 panel reported `routing WRONG` over an audio pipeline that had no source at all.
 Restored with `scripts/load-virtual-mic.sh` plus a bridge restart; verified with a
 real capture (peak 2470/32767).
+
+L9 — P9 verification, on the live system and not in a stub: with the bridge
+running the new code, `pactl unload-module` removed the remap source, and the
+watchdog recreated it within a second (source id 9998 -> 13452), logged
+"virtual device lost (sink or phone_mic is gone); recreating it", re-announced the
+stream, and the capture measured a real signal (peak 6159/32767). The sink index
+is now re-resolved every iteration, because a PipeWire restart changes it and the
+old code trusted the value read at startup. No automated test covers this loop: it
+needs a live pactl and a running scrcpy, so the evidence is the live run above.
