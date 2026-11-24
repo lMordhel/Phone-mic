@@ -53,10 +53,23 @@ cd Phone-mic
 ./packaging/install.sh
 ```
 
-The installer writes the PipeWire fragment, the `phone-mic` command in
-`~/.local/bin`, the `phone-mic-bridge` user unit and the documentation. It needs no
-root and **never restarts PipeWire** (a restart drops Bluetooth links and
-screencasts).
+The installer is per-user: no root, nothing written under `/usr` or `/etc`, and it
+**never restarts PipeWire** (a restart drops Bluetooth links and screencasts). It
+copies the panel, the scripts, the configuration and this documentation into
+`${XDG_DATA_HOME:-~/.local/share}/phone-mic`, and generates the `phone-mic` command
+and the `phone-mic-bridge` unit from that prefix. Moving or deleting the checkout
+afterwards breaks nothing.
+
+Before finishing, it checks the environment and names the command that fixes each
+problem it finds: `adb`, `scrcpy` 3.2 or newer (the release that added
+`--audio-source=mic`), and `pactl` answering from `pipewire-pulse`. A missing tool
+never aborts an otherwise valid install; it says what will not work and why.
+
+```bash
+./packaging/install.sh --prefix DIR   # install somewhere else
+./packaging/install.sh --version      # the version installed here
+./packaging/install.sh --help
+```
 
 Check it:
 
@@ -271,12 +284,21 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 ## Uninstall
 
 ```bash
-systemctl --user disable --now phone-mic-bridge
-rm ~/.local/bin/phone-mic \
-   ~/.config/systemd/user/phone-mic-bridge.service \
-   ~/.config/pipewire/pipewire.conf.d/60-phone-mic.conf
-rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
+./packaging/install.sh --uninstall
 ```
+
+That removes exactly what the installer created: the command, the prefix, the unit
+and the PipeWire fragment. It stops `phone-mic-bridge` first, because a unit with
+`Restart=always` would otherwise keep restarting against files that no longer
+exist.
+
+Two things survive on purpose:
+
+- The live `phonemic_sink` and `phone_mic` nodes stay loaded until PipeWire
+  restarts, so nothing has to restart it now. They disappear at the next start.
+- `~/.local/state/phone-mic/` holds the remembered adb port and address. It is
+  written by `scripts/connect-phone.sh`, not by the installer, so it is reported
+  and left alone. Remove it by hand if you do not want it.
 
 ## What this is not
 
