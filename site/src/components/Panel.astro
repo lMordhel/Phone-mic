@@ -19,7 +19,7 @@ const t = copy[lang];
 type Seg = { t: string; c?: string };
 type Row = { l: Seg[]; r?: Seg[] } | 'sep' | 'blank';
 
-const W = 60; // usable width inside the frame
+const W = 62; // usable width inside the frame
 
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -38,7 +38,7 @@ const rows: Row[] = [
       { t: '   Redmi Note 13 · Wi-Fi · 192.168.100.57' },
     ],
   },
-  { l: [{ t: 'buffer 50 ms · routing ' }, { t: 'ok', c: 'ok' }] },
+  { l: [{ t: 'service active · buffer 50 ms · routing ' }, { t: 'ok', c: 'ok' }] },
   'sep',
   { l: [{ t: 'INPUT MONITOR', c: 'c' }] },
   { l: [{ t: '▁▃▅▇█▆▅▃▁▂▄▆▇█▅▃▂▁▃▅▆▅▃▂▁▂▄▅▆▇▆▅▄▃▂▁', c: 'ok' }] },
@@ -58,8 +58,8 @@ const rows: Row[] = [
   { l: [{ t: 'VOLUME  ' }, { t: '━━━━━━━━━━━━━━━━●', c: 'ok' }, { t: ' 100%' }] },
   'blank',
   'sep',
-  { l: [{ t: '[C] Connect  [X] Stop  [M] Mute  [T] Theme  [Q] Quit' }] },
-  { l: [{ t: '[Tab] gain/volume  [←→] ±5%   ·   focus gain', c: 'c' }] },
+  { l: [{ t: '[C] Connect [X] Stop [M] Mute [A] Reroute [T] Theme' }] },
+  { l: [{ t: '[D] Devices [R] Reconnect [Q] Quit [Tab] gain/volume [←→] ±5%', c: 'c' }] },
 ];
 
 const body = rows
