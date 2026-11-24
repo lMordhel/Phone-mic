@@ -40,19 +40,22 @@ command that fixes each one. A missing `scrcpy` older than 3.2, an unreachable
 One line per task: ID, specs, route, commit.
 
 - T1 — Add the MIT license and point the README at it. S1. inline.
-  `docs(license): add the MIT license`
+  `docs(license): add the MIT license` — done, `136195c`.
 - T2 — Self-contained install: copy `tui/`, `scripts/`, `conf/` and the docs into
   the install prefix, generate the wrapper and the unit at that prefix, add
   `--prefix`, `--version` and `--uninstall`. S2 S3 S4 S5 S6. worker.
-  `feat(packaging): install a self-contained copy`
+  `feat(packaging): install a self-contained copy` — done, `0060890` (shared with
+  T3, same file). Uninstall target guarded by a marker and the unit substitution
+  escaped for `&`; both covered by R11 and R12.
 - T3 — Preflight the environment with actionable messages. S7. worker.
-  `feat(packaging): check the environment before installing`
+  `feat(packaging): check the environment before installing` — done, `0060890`.
 - T4 — `packaging/tests/install-smoke.sh`: install into a temporary HOME, assert
   the prefix layout, the generated unit and `--version`, then uninstall and
-  assert nothing of ours remains. S2 S6. worker.
+  assert nothing of ours remains. S2 S6. worker. — parked by L6.
   `test(packaging): prove a clean install and uninstall`
 - T5 — README: install, compatibility matrix and uninstall from the prefix.
-  S2 S3 S6. worker. `docs(readme): document the self-contained install`
+  S2 S3 S6. worker. — parked by L6.
+  `docs(readme): document the self-contained install`
 
 ## Log
 
