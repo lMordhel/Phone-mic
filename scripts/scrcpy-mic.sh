@@ -16,6 +16,7 @@
 # and the virtual device loaded (scripts/load-virtual-mic.sh).
 set -eu
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
 SINK=phonemic_sink
 SOURCE=phone_mic
 FIRST_WAIT_S=60
@@ -40,6 +41,20 @@ adb devices | awk 'NR>1 && $2=="device" {found=1} END {exit !found}' ||
     die "no authorized device: pair wireless debugging (adb pair) or connect USB and accept the prompt"
 
 sink_id() { pactl list short sinks | awk -v s="$SINK" '$2==s {print $1; exit}'; }
+
+# Everything the pipeline needs lives in memory: the sink comes from the PipeWire
+# configuration, but the remap source is loaded at runtime and the stream is
+# created by scrcpy. A PipeWire restart wipes both while this process keeps
+# running, so the ids and the nodes must be re-checked, never trusted from
+# startup. load-virtual-mic.sh is idempotent and recreates whatever is missing.
+restore_device() {
+    echo "scrcpy-mic: virtual device lost ($1); recreating it"
+    "$HERE/load-virtual-mic.sh" >/dev/null 2>&1 || true
+}
+
+device_ok() {
+    [ -n "$(sink_id)" ] && pactl list short sources 2>/dev/null | grep -qw "$SOURCE"
+}
 
 # Prints "index sink_index" for every playback stream owned by scrcpy. The verbose
 # listing is used because `pactl list short sink-inputs` carries no application name.
@@ -68,6 +83,15 @@ want=$(sink_id)
 announced=""
 waited=0
 while kill -0 "$SCRCPY_PID" 2>/dev/null; do
+    # The sink index changes when PipeWire restarts, and the runtime-loaded remap
+    # source disappears with it, so neither value may be trusted from startup.
+    if ! device_ok; then
+        restore_device "sink or $SOURCE is gone"
+        # The ids are new: the active stream must be announced again.
+        announced=""
+    fi
+    want=$(sink_id)
+
     on_target=""
     while read -r idx sink; do
         [ -z "${idx:-}" ] && continue
