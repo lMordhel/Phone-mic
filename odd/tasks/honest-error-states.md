@@ -149,3 +149,19 @@ stream, and the capture measured a real signal (peak 6159/32767). The sink index
 is now re-resolved every iteration, because a PipeWire restart changes it and the
 old code trusted the value read at startup. No automated test covers this loop: it
 needs a live pactl and a running scrcpy, so the evidence is the live run above.
+
+L10 — native review of the whole block (lineage `review-0d15f1d1a7f39f36`, base
+`df521a4`, 2.098 changed lines, tier high, lenses resilience/readability/
+reliability). Outcome: **escalated**, not approved and not corrected. Three
+reviewers ran (175 s, 245 s, 195 s). One finding came back: R2-001, WARNING,
+readability, `deterministic`, at `packaging/tests/packaging-static.sh:16` — the
+shared `ck` helper counted a skipped check as a pass, so on a machine without
+`pw-config` or `pactl` the suite reported `ok` for checks that never ran. Its
+recorded causal disposition is `introduced`, which is accurate: the suite is mine.
+The escalation cause recorded by the provider is `unknown_causality`, and the
+lineage ended in `native_stop_required` with no correction route offered, so the
+finding was fixed outside the review and covered by `cf535a3` instead. `ck` now
+distinguishes 0 (passed), 77 (skipped, tool absent) and failure, verified with a
+PATH that has neither tool.
+The provider returned no finding text through STATUS and `export` is retired;
+the claim above was read from `.git/gentle-ai/review-transactions/v2/<lineage>/`.
