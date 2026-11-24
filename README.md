@@ -288,3 +288,9 @@ rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
   source over that sink.
 
 Work tracking and evidence live in [`odd/tasks/phone-mic.md`](odd/tasks/phone-mic.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE). You may use, modify and redistribute this project,
+including commercially, as long as the copyright notice is kept.
+
