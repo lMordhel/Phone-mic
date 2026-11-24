@@ -31,6 +31,23 @@ SINK = "phonemic_sink"
 SOURCE = "phone_mic"
 BRIDGE_UNIT = "phone-mic-bridge"
 ADB_READY = "device"    # the one adb device state that carries a usable transport
+ADB_UNAUTHORIZED = "unauthorized"   # the phone is asking for permission
+ADB_OFFLINE = "offline"             # adb knows the device, the device is mute
+
+# S5: the phone link's own words. adb unusable, a device adb sees but cannot
+# use, and no device at all must never read the same.
+LINK_UP = "CONNECTED"
+LINK_DOWN = "DISCONNECTED"
+LINK_NO_ADB = "NO ADB"
+LINK_UNAUTHORIZED = "UNAUTHORIZED"
+LINK_OFFLINE = "OFFLINE"
+
+LINK_CAUSE_ADB = "adb no responde."
+LINK_FIX_ADB = "Arreglo: sudo pacman -S --needed android-tools"
+LINK_CAUSE_UNAUTHORIZED = "el teléfono no autorizó esta computadora."
+LINK_FIX_UNAUTHORIZED = "Arreglo: aceptar la depuración en el teléfono"
+LINK_CAUSE_OFFLINE = "el teléfono no responde al adb."
+LINK_FIX_OFFLINE = "Arreglo: phone-mic reconnect"
 
 SAMPLE_RATE = 8000      # metering rate: enough for level, cheap in CPU
 BAR_WINDOW_MS = 70      # one waveform slot
@@ -410,6 +427,15 @@ def find_sink_input(inputs: list[SinkInput] | None,
     return None
 
 
+def routing_ok(sink: str | None, stream_sink: str | None) -> bool:
+    """Whether the bridge stream sits on the remap sink.
+
+    An unknown index (`None`: the listing failed) and an absent one (`""`: there
+    is no such sink) can never match, so neither may ever read as routed.
+    """
+    return bool(sink) and bool(stream_sink) and sink == stream_sink
+
+
 class AudioState(NamedTuple):
     """What the panel may say about the audio server (S4).
 
@@ -458,6 +484,83 @@ def mic_state(audio: AudioState, muted: bool | None, alive: bool,
     if alive:
         return MicState("ACTIVE", "ok", "", "")
     return MicState(fmt_value(unit_state).upper(), "bad", "", "")
+
+
+def audio_buffer_ms() -> str:
+    """The audio buffer the bridge runs with: AUDIO_BUFFER, 50 ms by default."""
+    return os.environ.get("AUDIO_BUFFER", "50")
+
+
+def transport_of(serial: str | None) -> str | None:
+    """USB or Wi-Fi, from the serial adb reports; None when there is no device."""
+    if not serial:
+        return None
+    return "Wi-Fi" if ":" in serial else "USB"
+
+
+def address_of(serial: str | None) -> str | None:
+    """The host part of an adb serial; None when there is no device."""
+    return serial.split(":")[0] if serial else None
+
+
+class LinkState(NamedTuple):
+    """What the PHONE LINK box may say, from facts only (S5).
+
+    `routing` is True when the bridge stream sits on the remap sink and False
+    when it sits elsewhere, but None when the audio server did not answer: a
+    routing claim needs a server that answers (S4, S5). `model` and `service`
+    are None when they could not be read, which the box prints as `—`, never as
+    `-` and never as a word that looks like a state (S2, S5).
+    """
+    word: str
+    tone: str
+    cause: str
+    fix: str
+    model: str | None
+    transport: str | None
+    address: str | None
+    service: str | None
+    routing: bool | None
+
+
+def link_state(devices: list[tuple[str, str]] | None, model: str | None,
+               unit_state: str | None, audio: AudioState,
+               routed: bool) -> LinkState:
+    """Decide the phone link state from facts only: adb, the device, the unit.
+
+    Situations that used to read the same now have their own words (S5): adb
+    itself unusable (None: no adb binary, or a server that will not answer), a
+    device adb sees but cannot use (`unauthorized`, `offline`), a device in any
+    other state adb reports, and no device attached at all. The unusable ones
+    also name the cause and the command that fixes them, in the shape the audio
+    box uses (S4). Nothing unreadable is invented: it stays None.
+    """
+    routing = routed if audio.up else None
+    if devices is None:
+        return LinkState(LINK_NO_ADB, "bad", LINK_CAUSE_ADB, LINK_FIX_ADB,
+                         model, None, None, unit_state, routing)
+    ready = [serial for serial, state in devices if state == ADB_READY]
+    if ready:
+        serial = ready[0]
+        return LinkState(LINK_UP, "ok", "", "", model, transport_of(serial),
+                         address_of(serial), unit_state, routing)
+    if not devices:
+        return LinkState(LINK_DOWN, "bad", "", "", model, None, None,
+                         unit_state, routing)
+    serial, state = devices[0]
+    states = [state for _, state in devices]
+    if ADB_UNAUTHORIZED in states:
+        word, tone, cause, fix = (LINK_UNAUTHORIZED, "warn",
+                                  LINK_CAUSE_UNAUTHORIZED, LINK_FIX_UNAUTHORIZED)
+    elif ADB_OFFLINE in states:
+        word, tone, cause, fix = (LINK_OFFLINE, "bad", LINK_CAUSE_OFFLINE,
+                                  LINK_FIX_OFFLINE)
+    else:
+        # adb's own word for a state this module does not interpret: honest, and
+        # still distinguishable from CONNECTED and from DISCONNECTED.
+        word, tone, cause, fix = state.upper(), "warn", "", ""
+    return LinkState(word, tone, cause, fix, model, transport_of(serial),
+                     address_of(serial), unit_state, routing)
 
 
 def mic_value_line(volume: int | None, stream_gain: int | None) -> str:
@@ -805,26 +908,32 @@ def truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
-def connection_lines(devices: list[tuple[str, str]] | None
-                     ) -> list[tuple[str, str, str]]:
-    """(label, value, tone) rows for the CONNECTION panel."""
-    rows: list[tuple[str, str, str]] = []
-    attached = [serial for serial, state in devices or () if state == ADB_READY]
-    if attached:
-        peer = attached[0]
-        kind = "Wi-Fi" if ":" in peer else "USB"
-        host = peer.split(":")[0]
-        rows.append(("state", "CONNECTED", "ok"))
-        rows.append(("device", truncate(fmt_value(adb_model()), 20), "plain"))
-        rows.append(("transport", kind, "plain"))
-        rows.append(("address", host, "plain"))
+def link_rows(link: LinkState) -> list[tuple[str, str, str]]:
+    """(label, value, tone) rows of the PHONE LINK box: seven rows, always.
+
+    The four fields keep their places and the routing line stays last. The two
+    rows between them carry either the diagnosis (cause and fix) or the bridge
+    unit state and the buffer setting. Seven is what the box holds, so changed
+    words never move the frame (S8).
+    """
+    rows: list[tuple[str, str, str]] = [
+        ("state", link.word, link.tone),
+        ("device", truncate(fmt_value(link.model), 20), "plain"),
+        ("transport", fmt_value(link.transport), "plain"),
+        ("address", fmt_value(link.address), "plain"),
+    ]
+    if link.cause:
+        rows.append(("", link.cause, "warn"))
+        rows.append(("", link.fix, "dim"))
     else:
-        rows.append(("state", "DISCONNECTED", "bad"))
-        rows.append(("device", "-", "plain"))
-        rows.append(("transport", "-", "plain"))
-        rows.append(("address", "-", "plain"))
-    buffer_ms = os.environ.get("AUDIO_BUFFER", "50")
-    rows.append(("buffer", f"{buffer_ms} ms", "plain"))
+        service_tone = "plain" if link.service else "dim"
+        rows.append(("service", fmt_value(link.service), service_tone))
+        rows.append(("buffer", f"{audio_buffer_ms()} ms", "plain"))
+    if link.routing is None:
+        rows.append(("", f"routing {UNKNOWN}", "dim"))
+    else:
+        rows.append(("", "routing ok" if link.routing else "routing WRONG",
+                     "ok" if link.routing else "bad"))
     return rows
 
 
@@ -958,16 +1067,17 @@ def interactive() -> int:
             devices = adb_devices()
             pids = bridge_pids()
             state = bridge_unit_state()
+            model = adb_model()
             want = sink_index() or ""
             stream = bridge_stream()
             have = stream.sink if stream else ""
+            routed = routing_ok(want, have)
             volume = source_volume()
             muted = source_muted()
             stream_gain = stream_volume()
-            buffer_ms = os.environ.get("AUDIO_BUFFER", "50")
-            # An unknown index (None -> "") can never match: it must not read as ok.
-            routing_ok = bool(have) and bool(want) and have == want
-            routing_dot = "ok" if routing_ok else "WRONG"
+            # One decision from facts, shared with the `status` snapshot (S5).
+            link = link_state(devices, model, state, audio, routed)
+            routing_dot = "ok" if routed else "WRONG"
 
             # --- two panels (rows 5..14) ----------------------------------
             panel_y = 5
@@ -977,16 +1087,16 @@ def interactive() -> int:
             draw_box(stdscr, top + panel_y, left_x, panel_h, col_w, color=tone("border"))
             draw_box(stdscr, top + panel_y, right_x, panel_h, col_w, color=tone("border"))
 
-            conn = connection_lines(devices)
+            conn = link_rows(link)
             for i, (label, value, kind) in enumerate(conn):
                 row = panel_y + 1 + i
                 if label == "state":
                     put(row, left_x + 2, "● " + value, tone(kind) | curses.A_BOLD)
-                else:
+                elif label:
                     put(row, left_x + 2, f"{label:<10}", tone("dim"))
-                    put(row, left_x + 13, value, tone("plain"))
-            put(panel_y + panel_h - 2, left_x + 2, f"routing {routing_dot}",
-                tone("ok") if routing_ok else tone("bad"))
+                    put(row, left_x + 13, value, tone(kind))
+                else:
+                    put(row, left_x + 2, value, tone(kind))
 
             wave_w = max(8, col_w - 6)
             # One decision, taken from facts: never draw a level nobody measured
@@ -1008,7 +1118,7 @@ def interactive() -> int:
             rms = meter.rms_db if capture.measuring else None
             put(panel_y + 6, right_x + 2,
                 f"RMS {fmt_value(rms, '5.1f', ' dB', 8)}   "
-                f"buffer {buffer_ms} ms", tone("dim"))
+                f"buffer {audio_buffer_ms()} ms", tone("dim"))
 
             # --- virtual microphone (rows 16..21) -------------------------
             mic_y = panel_y + panel_h + 2
@@ -1036,7 +1146,7 @@ def interactive() -> int:
                 put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
                     + (f" · pid {pids[0]}" if pids else "")
                     + f" · routing {routing_dot}",
-                    tone("ok") if routing_ok else tone("bad"))
+                    tone("ok") if routed else tone("bad"))
 
                 def slider(row: int, label: str, value: int | None,
                            selected: bool) -> None:
@@ -1212,12 +1322,16 @@ def once() -> int:
     devices = adb_devices()
     pids = bridge_pids()
     state = bridge_unit_state()
+    model = adb_model()
     want = sink_index() or ""
     stream = bridge_stream()
     have = stream.sink if stream else ""
+    routed = routing_ok(want, have)
     volume = source_volume()
     stream_gain = stream_volume()
     muted = source_muted()
+    # The same decision the panel takes, from the same helper (S5, S6).
+    link = link_state(devices, model, state, audio, routed)
     # The same decision the panel takes, from the same helper (S2, S3).
     capture = meter_state(meter.available, meter.running, meter.windows,
                           meter.peak_db)
@@ -1234,8 +1348,13 @@ def once() -> int:
     print(TEE_L + H * (width - 2) + TEE_R)
     row("")
     row("  PHONE LINK")
-    for label, value, kind in connection_lines(devices):
-        row(f"   ● {value}" if label == "state" else f"     {label:<10} {value}")
+    for label, value, kind in link_rows(link):
+        if label == "state":
+            row(f"   ● {value}")
+        elif label:
+            row(f"     {label:<10} {value}")
+        else:
+            row(f"     {value}")
     row("")
     row("  INPUT MONITOR" + (f"   {capture.word}" if capture.word else ""))
     row("   " + wave_row(capture, slots, width - 6))
@@ -1244,11 +1363,10 @@ def once() -> int:
     row("")
     row("  VIRTUAL MICROPHONE")
     alive = bool(pids) and state == "active"
-    routing = "ok" if bool(have) and bool(want) and have == want else "WRONG"
     # The same decision the panel takes, from the same helper (S4, S7).
     mic = mic_state(audio, muted, alive, state)
     # No routing claim either while the server is silent: unknown is not WRONG.
-    claim = f"   routing {routing}" if audio.up else ""
+    claim = f"   routing {'ok' if routed else 'WRONG'}" if audio.up else ""
     row(f"   ● Phone-Mic   {mic.word}{claim}")
     if mic.cause:
         row(f"     {mic.cause}")

@@ -10,6 +10,8 @@ never look like a plausible number. Run with:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import time
@@ -591,6 +593,318 @@ class VolumeControlTest(unittest.TestCase):
         result = tui.set_stream_volume(70)
         self.assertFalse(result.ok)
         self.assertEqual(written, [])
+
+
+# What `adb devices` answers in each of the situations S5 names.
+ADB_ONE_READY_WIFI = [("192.168.100.99:39999", "device")]
+ADB_ONE_READY_USB = [("R58M12345", "device")]
+ADB_ONE_UNAUTHORIZED = [("emulator-5554", "unauthorized")]
+ADB_ONE_OFFLINE = [("0123456789", "offline")]
+ADB_NONE = []
+ADB_UNUSABLE = None     # adb itself could not answer at all
+
+
+def audio_up():
+    return tui.audio_state(PACTL_INFO)
+
+
+def audio_down():
+    return tui.audio_state(None)
+
+
+def rows_of(link):
+    """The (label, value, tone) rows the PHONE LINK box shows."""
+    return list(tui.link_rows(link))
+
+
+def field(link, label):
+    """The value in one labelled column of the box, or None when absent."""
+    for row_label, value, _ in rows_of(link):
+        if row_label == label:
+            return value
+    return None
+
+
+class RoutingFactTest(unittest.TestCase):
+    """The routing comparison itself, before any box decides what to say."""
+
+    def test_the_stream_on_the_remap_sink_is_routed(self):
+        self.assertTrue(tui.routing_ok("5", "5"))
+
+    def test_the_stream_on_another_sink_is_not_routed(self):
+        self.assertFalse(tui.routing_ok("5", "3"))
+
+    def test_an_unknown_sink_never_matches(self):
+        # None means the listing failed; "" means the sink is absent.
+        self.assertFalse(tui.routing_ok(None, None))
+        self.assertFalse(tui.routing_ok("", ""))
+        self.assertFalse(tui.routing_ok("5", None))
+        self.assertFalse(tui.routing_ok(None, "5"))
+
+
+class LinkStateTest(unittest.TestCase):
+    """S5: the phone link decides its own state from the facts."""
+
+    def test_adb_unusable_is_its_own_state(self):
+        link = tui.link_state(ADB_UNUSABLE, None, "active", audio_up(), False)
+        self.assertEqual(link.word, "NO ADB")
+        self.assertNotIn(link.word, ("CONNECTED", "DISCONNECTED"))
+        self.assertEqual(link.tone, "bad")
+
+    def test_adb_unusable_names_the_fixing_command(self):
+        # S5, in the audio box's shape: the cause, then "Arreglo: <command>".
+        link = tui.link_state(ADB_UNUSABLE, None, "active", audio_up(), False)
+        self.assertTrue(link.cause, link.cause)
+        self.assertTrue(link.fix.startswith("Arreglo: "), link.fix)
+        self.assertIn("android-tools", link.fix)
+
+    def test_an_unauthorized_device_is_not_a_missing_device(self):
+        link = tui.link_state(ADB_ONE_UNAUTHORIZED, None, "active",
+                              audio_up(), False)
+        self.assertEqual(link.word, "UNAUTHORIZED")
+        self.assertNotEqual(link.word, "DISCONNECTED")
+        self.assertTrue(link.cause)
+        self.assertTrue(link.fix.startswith("Arreglo: "), link.fix)
+
+    def test_an_offline_device_is_not_a_missing_device(self):
+        link = tui.link_state(ADB_ONE_OFFLINE, None, "active", audio_up(),
+                              False)
+        self.assertEqual(link.word, "OFFLINE")
+        self.assertNotEqual(link.word, "DISCONNECTED")
+        self.assertTrue(link.cause)
+        self.assertTrue(link.fix.startswith("Arreglo: "), link.fix)
+
+    def test_the_three_situations_never_look_alike(self):
+        words = [
+            tui.link_state(ADB_UNUSABLE, None, "active", audio_up(), False).word,
+            tui.link_state(ADB_ONE_UNAUTHORIZED, None, "active", audio_up(),
+                           False).word,
+            tui.link_state(ADB_ONE_OFFLINE, None, "active", audio_up(),
+                           False).word,
+            tui.link_state(ADB_NONE, None, "active", audio_up(), False).word,
+        ]
+        self.assertEqual(len(set(words)), 4, words)
+
+    def test_every_fix_offered_is_its_own(self):
+        fixes = [
+            tui.link_state(ADB_UNUSABLE, None, "active", audio_up(), False).fix,
+            tui.link_state(ADB_ONE_UNAUTHORIZED, None, "active", audio_up(),
+                           False).fix,
+            tui.link_state(ADB_ONE_OFFLINE, None, "active", audio_up(),
+                           False).fix,
+        ]
+        self.assertEqual(len(set(fixes)), 3, fixes)
+        for fix in fixes:
+            self.assertTrue(fix.startswith("Arreglo: "), fix)
+
+    def test_no_device_attached_keeps_the_old_word(self):
+        link = tui.link_state(ADB_NONE, None, "active", audio_up(), False)
+        self.assertEqual(link.word, "DISCONNECTED")
+
+    def test_a_usable_device_keeps_the_old_word(self):
+        # PRESERVE: a phone that works still reads CONNECTED, in the ok tone.
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        self.assertEqual(link.word, "CONNECTED")
+        self.assertEqual(link.tone, "ok")
+        self.assertEqual((link.cause, link.fix), ("", ""))
+
+    def test_a_usb_device_is_named_as_usb(self):
+        link = tui.link_state(ADB_ONE_READY_USB, "Pixel 7", "active",
+                              audio_up(), False)
+        self.assertEqual(link.transport, "USB")
+        self.assertEqual(link.address, "R58M12345")
+
+    def test_a_wireless_device_keeps_its_host_as_the_address(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        self.assertEqual(link.transport, "Wi-Fi")
+        self.assertEqual(link.address, "192.168.100.99")
+
+    def test_a_device_that_is_not_usable_still_reports_where_it_is(self):
+        link = tui.link_state([("192.168.100.99:39999", "offline")], None,
+                              "active", audio_up(), False)
+        self.assertEqual(link.transport, "Wi-Fi")
+        self.assertEqual(link.address, "192.168.100.99")
+
+    def test_a_state_this_module_does_not_know_gets_adbs_own_word(self):
+        link = tui.link_state([("R58M12345", "recovery")], None, "active",
+                              audio_up(), False)
+        self.assertEqual(link.word, "RECOVERY")
+        self.assertNotIn(link.word, ("CONNECTED", "DISCONNECTED"))
+
+
+class LinkBoxTest(unittest.TestCase):
+    """S5/S8: what the PHONE LINK box prints, in the rows it already has."""
+
+    def test_a_missing_model_is_unknown_not_a_dash(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, None, "active", audio_up(),
+                              True)
+        self.assertEqual(field(link, "device"), tui.UNKNOWN)
+
+    def test_a_missing_model_over_a_dead_link_is_unknown_too(self):
+        link = tui.link_state(ADB_ONE_UNAUTHORIZED, None, "active", audio_up(),
+                              False)
+        self.assertEqual(field(link, "device"), tui.UNKNOWN)
+        for _, value, _ in rows_of(link):
+            self.assertNotEqual(value.strip(), "-")
+
+    def test_a_known_model_is_shown(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        self.assertEqual(field(link, "device"), "Redmi Note 13")
+
+    def test_an_unreadable_unit_state_is_unknown_not_a_state_word(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", None,
+                              audio_up(), True)
+        self.assertEqual(field(link, "service"), tui.UNKNOWN)
+        for _, value, _ in rows_of(link):
+            self.assertNotIn(value.strip().lower(), ("unknown", "none"))
+
+    def test_a_readable_unit_state_is_shown_as_itself(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        self.assertEqual(field(link, "service"), "active")
+
+    def test_the_link_words_reach_the_box(self):
+        boxes = [
+            rows_of(tui.link_state(ADB_UNUSABLE, None, None, audio_up(),
+                                     False)),
+            rows_of(tui.link_state(ADB_ONE_UNAUTHORIZED, None, None,
+                                     audio_up(), False)),
+            rows_of(tui.link_state(ADB_ONE_OFFLINE, None, None, audio_up(),
+                                     False)),
+            rows_of(tui.link_state(ADB_NONE, None, None, audio_up(), False)),
+        ]
+        states = [box[0][1] for box in boxes]
+        self.assertEqual(len(set(states)), 4, states)
+
+    def test_the_box_keeps_its_seven_rows_in_every_situation(self):
+        # S8: the words change, the geometry of the box does not.
+        situations = [
+            (ADB_ONE_READY_WIFI, "Redmi Note 13", "active", True),
+            (ADB_NONE, None, None, False),
+            (ADB_UNUSABLE, None, None, False),
+            (ADB_ONE_UNAUTHORIZED, None, None, False),
+            (ADB_ONE_OFFLINE, None, None, False),
+            ([("R58M12345", "recovery")], None, "failed", False),
+        ]
+        for devices, model, unit, routed in situations:
+            for audio in (audio_up(), audio_down()):
+                link = tui.link_state(devices, model, unit, audio, routed)
+                self.assertEqual(len(rows_of(link)), 7,
+                                 (devices, audio, rows_of(link)))
+
+    def test_a_connected_link_still_prints_the_old_fields(self):
+        # PRESERVE: state, device, transport, address and buffer read as before.
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        values = [value for _, value, _ in rows_of(link)]
+        self.assertIn("CONNECTED", values)
+        self.assertIn("Redmi Note 13", values)
+        self.assertIn("Wi-Fi", values)
+        self.assertIn("192.168.100.99", values)
+        self.assertTrue(any(v.endswith(" ms") for v in values), values)
+
+    def test_routing_is_reported_when_the_server_answers(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), True)
+        self.assertTrue(link.routing)
+        self.assertIn("routing ok", [v for _, v, _ in rows_of(link)])
+
+    def test_a_stream_elsewhere_is_reported_as_wrong(self):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), False)
+        self.assertFalse(link.routing)
+        self.assertIn("routing WRONG", [v for _, v, _ in rows_of(link)])
+
+    def test_no_routing_claim_while_the_audio_server_is_silent(self):
+        # S5: WRONG is a claim about routing; a silent server cannot support it.
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_down(), True)
+        self.assertIsNone(link.routing)
+        values = [v for _, v, _ in rows_of(link)]
+        self.assertIn(f"routing {tui.UNKNOWN}", values)
+        self.assertNotIn("routing WRONG", values)
+        self.assertNotIn("routing ok", values)
+
+
+class OnceSnapshotTest(unittest.TestCase):
+    """S5/S6: the one-shot snapshot says the same words as the panel."""
+
+    class FakeMeter:
+        """A meter that has already measured nothing and needs no capture."""
+
+        def __init__(self):
+            self.available = True
+            self.peak_db = None
+            self.rms_db = None
+            self.windows = 4
+            self.running = False
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def snapshot(self):
+            return [tui.FLOOR_DB] * tui.WAVE_SLOTS
+
+    def setUp(self):
+        self.saved = {name: getattr(tui, name) for name in (
+            "LevelMeter", "adb_devices", "adb_model", "bridge_pids",
+            "bridge_unit_state", "sink_index", "bridge_stream",
+            "source_volume", "stream_volume", "source_muted", "audio_probe")}
+        tui.LevelMeter = self.FakeMeter
+        tui.adb_model = lambda: None
+        tui.bridge_pids = lambda: []
+        tui.bridge_unit_state = lambda: "active"
+        tui.sink_index = lambda: "5"
+        tui.bridge_stream = lambda: None
+        tui.source_volume = lambda: None
+        tui.stream_volume = lambda: None
+        tui.source_muted = lambda: None
+        tui.audio_probe = lambda: PACTL_INFO
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(tui, name, value)
+
+    def snapshot(self, devices):
+        tui.adb_devices = lambda: devices
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            tui.once()
+        return buffer.getvalue()
+
+    def test_an_unusable_adb_is_named_in_the_snapshot(self):
+        text = self.snapshot(None)
+        self.assertIn("NO ADB", text)
+        self.assertIn("Arreglo: ", text)
+        self.assertNotIn("DISCONNECTED", text)
+
+    def test_an_unauthorized_device_is_named_in_the_snapshot(self):
+        text = self.snapshot(ADB_ONE_UNAUTHORIZED)
+        self.assertIn("UNAUTHORIZED", text)
+        self.assertNotIn("CONNECTED", text)
+        self.assertNotIn("DISCONNECTED", text)
+
+    def test_an_offline_device_is_named_in_the_snapshot(self):
+        text = self.snapshot(ADB_ONE_OFFLINE)
+        self.assertIn("OFFLINE", text)
+        self.assertNotIn("DISCONNECTED", text)
+
+    def test_no_device_keeps_the_disconnected_snapshot(self):
+        text = self.snapshot(ADB_NONE)
+        self.assertIn("DISCONNECTED", text)
+
+    def test_the_snapshot_never_prints_a_dash_for_a_missing_model(self):
+        # PRESERVE: the label column keeps its words, but "-" is not a value.
+        text = self.snapshot(ADB_ONE_UNAUTHORIZED)
+        for line in text.splitlines():
+            if "device" in line:
+                self.assertNotIn("-", line.replace("device", ""), line)
 
 
 if __name__ == "__main__":
