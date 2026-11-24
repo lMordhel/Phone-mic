@@ -46,16 +46,19 @@ S8. Behaviour is preserved: key bindings, themes, layout and the four existing
 
 - P1 — Split failure from empty in the read layer: a query helper that reports
   failure distinctly, and converters that return None instead of `0`. S2. worker.
-  `refactor(tui): distinguish a failed read from an empty one`
+  `refactor(tui): distinguish a failed read from an empty one` — done, `8a8d046`.
+  Shared commit with P2: same file, and the tests belong with the behaviour.
 - P2 — Pure parsers plus tests: volume percent, mute, adb device states, sink
   input lookup and model props become pure functions with unit tests that need no
-  terminal. S2 S5. worker. `test(tui): cover the state parsers`
+  terminal. S2 S5. worker. `test(tui): cover the state parsers` — done,
+  `8a8d046`. 37 of the new cases fail against the previous module.
 - P3 — Input monitor honesty: `NO SIGNAL` when nothing is being captured,
   `NO CAPTURE TOOL` when `parec` is missing, measured floor still shown as the
-  genuine level. S2 S3. worker. `feat(tui): report capture state honestly`
+  genuine level. S2 S3. worker. `feat(tui): report capture state honestly` —
+  done, `ca7b635`. 11 of the new cases fail against the previous module.
 - P4 — Audio server and controls honesty: probe `pactl info`, show
   `AUDIO SERVER DOWN` with the fixing command, render gain/volume as `—` and
-  refuse to pretend a write succeeded. S2 S4 S7. worker.
+  refuse to pretend a write succeeded. S2 S4 S7. worker. — in flight.
   `feat(tui): report audio server state honestly`
 - P5 — Phone link honesty: adb unavailable, unauthorized, offline, no device,
   unknown unit state, unknown model. S5. worker.
@@ -89,3 +92,10 @@ True. `status` `:893-899` re-implements the state logic instead of reusing it.
 
 L4 — scope boundary: this feature touches `tui/` only. The installer work (T2/T3
 of professional-distribution) is parked by L1 of that document.
+
+L5 — review policy for this feature, decided by the orchestrator and reported to
+the owner: the TUI slice is reviewed ONCE, when P1-P7 are committed and the tree
+is quiet, instead of once per task. Each intermediate task keeps the file in
+motion, so a per-task review would freeze a half-written panel and pay four times
+for the same file. Commits `8a8d046` (P1+P2) and `ca7b635` (P3) were committed
+with local verification and no native review.
