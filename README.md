@@ -26,7 +26,7 @@ routed into a PipeWire virtual device. The whole interface is a terminal command
 
 | Part | State |
 | --- | --- |
-| Virtual device (`Phone-Mic`) in PipeWire | **working**, tested |
+| Virtual device (`Phone-Mic`) in PipeWire | **working**, tested; the sink comes from the configuration, the source from `pactl` |
 | Phone bridge over `scrcpy` (`--audio-source=mic`) | **working**, tested, nothing to install on the phone |
 | Terminal panel (`phone-mic`) | **working**, tested |
 | `phone-mic-bridge` systemd user service | **working**, tested, reconnects by itself |
@@ -39,6 +39,10 @@ routed into a PipeWire virtual device. The whole interface is a terminal command
   sudo pacman -S --needed pipewire-audio android-tools scrcpy
   ```
   `scrcpy` must be 3.2 or newer: `--audio-source=mic` appeared in that release.
+- `pipewire-pulse` running. The remap source is created with
+  `pactl load-module`, not by a native PipeWire module: pipewire 1.6 no longer
+  ships `libpipewire-module-remap-source`, so nothing is loaded from
+  `context.modules`.
 - Android phone, Android 11 or newer, on the same network as the PC.
 
 ## Install
@@ -49,15 +53,34 @@ cd Phone-mic
 ./packaging/install.sh
 ```
 
-The installer writes the PipeWire fragment, the `phone-mic` command in
-`~/.local/bin`, the `phone-mic-bridge` user unit and the documentation. It needs no
-root and **never restarts PipeWire** (a restart drops Bluetooth links and
-screencasts).
+The installer is per-user: no root, nothing written under `/usr` or `/etc`, and it
+**never restarts PipeWire** (a restart drops Bluetooth links and screencasts). It
+copies the panel, the scripts, the configuration and this documentation into
+`${XDG_DATA_HOME:-~/.local/share}/phone-mic`, and generates the `phone-mic` command
+and the `phone-mic-bridge` unit from that prefix. Moving or deleting the checkout
+afterwards breaks nothing.
+
+Before finishing, it checks the environment and names the command that fixes each
+problem it finds: `adb`, `scrcpy` 3.2 or newer (the release that added
+`--audio-source=mic`), and `pactl` answering from `pipewire-pulse`. A missing tool
+never aborts an otherwise valid install; it says what will not work and why.
+
+```bash
+./packaging/install.sh --prefix DIR   # install somewhere else
+./packaging/install.sh --version      # the version installed here
+./packaging/install.sh --help
+```
 
 Check it:
 
 ```bash
 phone-mic status
+```
+
+The packaging regressions are static: no root, no audio server, no phone needed.
+
+```bash
+packaging/tests/packaging-static.sh
 ```
 
 ## Phone setup
@@ -190,10 +213,16 @@ colours), not a single accent colour.
 phone-mic --theme warm-ember     # one run, without changing the saved theme
 ```
 
-Colours are defined with `curses.init_color`, so the palettes are exact RGB on
-terminals that allow colour redefinition (kitty, foot, alacritty). Where that is not
-available the palette is approximated with the nearest xterm-256 cube colours, so
-themes still change but with less fidelity.
+By default the palettes are drawn from the nearest xterm-256 cube colours, so a
+theme looks the same on every terminal. `PHONE_MIC_EXACT=1` instead redefines the
+terminal's own palette with `curses.init_color`: exact RGB where the terminal
+honours it (kitty, foot, alacritty), but identical-looking themes where the
+terminal advertises the capability and silently ignores it. That is why the cube
+is the default.
+
+The picker previews while you move with `j`/`k`, `Enter` applies and saves it, and
+`esc` or `t` closes it and restores the saved theme. `phone-mic status` prints the
+active theme on its last line.
 
 What each reading means:
 
@@ -216,7 +245,8 @@ shows a "terminal too small" note instead of drawing a broken frame.
 
 | Piece | Survives a reboot |
 | --- | --- |
-| `Phone-Mic` virtual device | yes, PipeWire configuration |
+| `phonemic_sink` (the sink) | yes, PipeWire reads `60-phone-mic.conf` |
+| `phone_mic` (the source) | no, the bridge service creates it on start |
 | adb connection | no, the bridge service reconnects when started |
 | `scrcpy` forwarding | no, start it with `phone-mic start` |
 
@@ -228,6 +258,8 @@ device by itself.
 | Setting | Where | Default |
 | --- | --- | --- |
 | Virtual sink / source names | `conf/60-phone-mic.conf` | `phonemic_sink` / `phone_mic` |
+| Where the sink is declared | `conf/60-phone-mic.conf` | PipeWire `context.objects` |
+| Where the source is created | `scripts/load-virtual-mic.sh` | the bridge unit's `ExecStartPre` |
 | scrcpy audio buffering | `AUDIO_BUFFER` env var | 50 ms (scrcpy default is 200 ms) |
 | scrcpy SDL output buffer | `AUDIO_OUTPUT_BUFFER` env var | 8 ms |
 | adb endpoint memory | `~/.local/state/phone-mic/` | learned on the first connection |
@@ -250,17 +282,29 @@ AUDIO_BUFFER=30 ./scripts/scrcpy-mic.sh
 | Bluetooth headset drops when audio restarts | a PipeWire restart tears down Bluetooth links | never restart PipeWire to apply configuration; use `scripts/load-virtual-mic.sh` |
 | Clicky or choppy audio | buffer too low for the network | raise `AUDIO_BUFFER` |
 | Bridge stuck retrying | the phone is unreachable or wireless debugging is off | `phone-mic status`, then check the phone |
-| Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph | normal; the panel fills once the capture is running |
+| No audio anywhere in the system, `pactl` says `Connection refused` | a fragment in `pipewire.conf.d` asks for a module this system does not ship, and the mandatory load aborted the daemon | remove that entry, then `systemctl --user reset-failed pipewire` and start it again |
+| Panel shows `AUDIO SERVER DOWN` and `GAIN —` | the audio server does not answer; the panel names that state instead of printing a reading it could not take | run the command the panel prints (`systemctl --user restart pipewire-pulse`), then `journalctl --user -u pipewire -n 20` |
+| `phone_mic` missing after a reboot | the remap source is created at runtime, not by the configuration | `systemctl --user restart phone-mic-bridge` |
+| Meter flat for the first seconds | `parec` needs ~2 s to join the PipeWire graph and the panel prints `NO SIGNAL` until the first window arrives | normal; it fills once the capture is running |
 
 ## Uninstall
 
 ```bash
-systemctl --user disable --now phone-mic-bridge
-rm ~/.local/bin/phone-mic \
-   ~/.config/systemd/user/phone-mic-bridge.service \
-   ~/.config/pipewire/pipewire.conf.d/60-phone-mic.conf
-rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
+./packaging/install.sh --uninstall
 ```
+
+That removes exactly what the installer created: the command, the prefix, the unit
+and the PipeWire fragment. It stops `phone-mic-bridge` first, because a unit with
+`Restart=always` would otherwise keep restarting against files that no longer
+exist.
+
+Two things survive on purpose:
+
+- The live `phonemic_sink` and `phone_mic` nodes stay loaded until PipeWire
+  restarts, so nothing has to restart it now. They disappear at the next start.
+- `~/.local/state/phone-mic/` holds the remembered adb port and address. It is
+  written by `scripts/connect-phone.sh`, not by the installer, so it is reported
+  and left alone. Remove it by hand if you do not want it.
 
 ## What this is not
 
@@ -272,3 +316,9 @@ rm -rf ~/.local/share/phone-mic ~/.local/state/phone-mic
   source over that sink.
 
 Work tracking and evidence live in [`odd/tasks/phone-mic.md`](odd/tasks/phone-mic.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE). You may use, modify and redistribute this project,
+including commercially, as long as the copyright notice is kept.
+

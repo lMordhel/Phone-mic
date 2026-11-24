@@ -2,8 +2,10 @@
 # Load the virtual microphone for the current session without restarting
 # PipeWire (a restart drops Bluetooth audio links and in-flight screencasts).
 #
-# The persistent equivalent is conf/60-phone-mic.conf, which PipeWire reads on
-# its next start. Both paths create the same two objects:
+# The reproducible equivalent for the sink is conf/60-phone-mic.conf, which
+# PipeWire reads on its next start and which install.sh copies. The source always
+# comes from here: a native remap-source module no longer ships with pipewire
+# 1.6, so the bridge unit runs this script before every start.
 #   phonemic_sink  Audio/Sink      where the phone bridge plays its audio
 #   phone_mic      Audio/Source    what applications capture from
 set -eu

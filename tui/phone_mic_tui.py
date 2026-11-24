@@ -23,12 +23,31 @@ import subprocess
 import sys
 import threading
 import time
+from typing import NamedTuple
 
 # realpath, not abspath: the command is installed as a wrapper in ~/.local/bin
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SINK = "phonemic_sink"
 SOURCE = "phone_mic"
 BRIDGE_UNIT = "phone-mic-bridge"
+ADB_READY = "device"    # the one adb device state that carries a usable transport
+ADB_UNAUTHORIZED = "unauthorized"   # the phone is asking for permission
+ADB_OFFLINE = "offline"             # adb knows the device, the device is mute
+
+# S5: the phone link's own words. adb unusable, a device adb sees but cannot
+# use, and no device at all must never read the same.
+LINK_UP = "CONNECTED"
+LINK_DOWN = "DISCONNECTED"
+LINK_NO_ADB = "NO ADB"
+LINK_UNAUTHORIZED = "UNAUTHORIZED"
+LINK_OFFLINE = "OFFLINE"
+
+LINK_CAUSE_ADB = "adb no responde."
+LINK_FIX_ADB = "Arreglo: sudo pacman -S --needed android-tools"
+LINK_CAUSE_UNAUTHORIZED = "el teléfono no autorizó esta computadora."
+LINK_FIX_UNAUTHORIZED = "Arreglo: aceptar la depuración en el teléfono"
+LINK_CAUSE_OFFLINE = "el teléfono no responde al adb."
+LINK_FIX_OFFLINE = "Arreglo: phone-mic reconnect"
 
 SAMPLE_RATE = 8000      # metering rate: enough for level, cheap in CPU
 BAR_WINDOW_MS = 70      # one waveform slot
@@ -36,9 +55,30 @@ WAVE_SLOTS = 28         # ~2 s of history
 FLOOR_DB = -60.0
 WAVE_CHARS = " ▁▂▃▄▅▆▇"
 
+UNKNOWN = "—"            # S2: an unreadable value is shown as a dash, not as 0
+MIC_MUTED = "MUTED"      # the one word for a muted source, decided by mic_state()
+
+NO_CAPTURE_TOOL = "NO CAPTURE TOOL"   # parec missing: nothing can be captured
+NO_SIGNAL = "NO SIGNAL"               # no window measured: nothing is captured
+
+# S4: the audio server did not answer, so nothing about the pipeline is known.
+AUDIO_SERVER_DOWN = "AUDIO SERVER DOWN"
+AUDIO_CAUSE = "pipewire-pulse no responde."
+AUDIO_FIX = "Arreglo: systemctl --user restart pipewire-pulse"
+AUDIO_TTL = 2.0         # one `pactl info` answer is reused for about a second
+
+# S7: a control with no reading to start from, and a stream that is not there.
+UNREADABLE_CONTROL = "no current value to change"
+NO_BRIDGE_STREAM = "NO BRIDGE STREAM"
+
 FRAME_MIN_W = 62
 FRAME_W = 78
 FRAME_H = 27
+
+# Footer geometry: the text starts this far inside the left border, and a
+# transient message starts at FOOTER_MSG_COL so it never lands on a key name.
+FOOTER_TEXT_COL = 3
+FOOTER_MSG_COL = 45
 
 TL, TR, BL, BR = "╭", "╮", "╰", "╯"
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = "┌", "┐", "└", "┘"
@@ -176,6 +216,23 @@ def save_theme(name: str) -> None:
         pass
 
 
+def use_exact_redefinition(can_change: bool, colors: int,
+                           override: str | None) -> bool:
+    """Whether to redefine the terminal's palette, or use the portable 256 cube.
+
+    A terminal can advertise the capability (ccc in terminfo) and silently ignore
+    the redefinition. When that happens every theme renders with the terminal's own
+    colours, so every theme looks the same and the choice appears lost. An
+    advertised capability is a promise, not proof: the cube is the default and
+    redefining is opt-in through PHONE_MIC_EXACT=1.
+    """
+    if override == "0":
+        return False
+    if override == "1":
+        return bool(can_change and colors >= 256)
+    return False
+
+
 def approx_256(r: int, g: int, b: int) -> int:
     """Nearest xterm-256 cube colour, for terminals without colour redefinition."""
     def level(value: int) -> int:
@@ -202,7 +259,9 @@ class Palette:
         self.enabled = True
         curses.start_color()
         curses.use_default_colors()
-        self.exact = bool(curses.can_change_color() and curses.COLORS >= 256)
+        self.exact = use_exact_redefinition(
+            curses.can_change_color(), curses.COLORS,
+            os.environ.get("PHONE_MIC_EXACT"))
 
         indices: dict[str, int] = {}
         for i, role in enumerate(ROLES):
@@ -230,12 +289,33 @@ PALETTE = Palette()
 
 # --------------------------------------------------------------------------- state
 
-def run(cmd: list[str], timeout: float = 3.0) -> str:
+def query(cmd: list[str], timeout: float = 3.0) -> str | None:
+    """Run a read-only query and return its stdout, or None when unreadable.
+
+    None means "unknown": a missing binary, a timeout, an OSError, or a non-zero
+    exit that printed nothing. It is never conflated with a successful empty
+    answer, which stays "": a failed read must not look like a measurement (S2).
+
+    A non-zero exit that did print something is kept, not discarded:
+    `systemctl is-active` writes the unit state to stdout and exits non-zero for
+    anything but "active", so "inactive" or "failed" is a real answer.
+    """
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return out.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
+        return None
+    if out.returncode != 0 and not out.stdout.strip():
+        return None
+    return out.stdout
+
+
+def run(cmd: list[str], timeout: float = 3.0) -> str:
+    """Fire-and-forget command: "" whatever happens; setters only.
+
+    Its callers ignore the output (`pactl set-*`, `move-sink-input`) or just list
+    what exists. A read that feeds a displayed value must use query().
+    """
+    return query(cmd, timeout) or ""
 
 
 class Cache:
@@ -260,19 +340,345 @@ class Cache:
 CACHE = Cache()
 
 
-def adb_devices() -> list[str]:
-    lines = run(["adb", "devices"]).splitlines()[1:]
-    return [line.split()[0] for line in lines if line.strip().endswith("device")]
+def fmt_value(value, spec: str = "", suffix: str = "", width: int = 0) -> str:
+    """Format a value that may be unknown: unknown is `—`, never a number (S2).
+
+    `width` keeps a column stable: the dash is padded to the width the numeric
+    form would have taken.
+    """
+    if value is None:
+        return UNKNOWN.ljust(width)
+    return format(value, spec) + suffix
 
 
-def adb_model() -> str:
-    def read() -> str:
+def parse_volume_percent(text: str | None) -> int | None:
+    """Aggregate percentage from `pactl get-*-volume`; None when unreadable."""
+    if text is None:
+        return None
+    for line in text.splitlines():
+        if "%" not in line:
+            continue
+        for part in line.split("/"):
+            part = part.strip()
+            if part.endswith("%"):
+                digits = "".join(c for c in part if c.isdigit())
+                if digits:
+                    return int(digits)
+    return None
+
+
+def parse_mute(text: str | None) -> bool | None:
+    """`Mute: yes|no`; None when the answer is neither."""
+    if text is None:
+        return None
+    words = text.strip().lower().replace(":", " ").split()
+    if "yes" in words:
+        return True
+    if "no" in words:
+        return False
+    return None
+
+
+def parse_unit_state(text: str | None) -> str | None:
+    """Unit state from `systemctl is-active`: active, inactive, failed, …"""
+    if text is None:
+        return None
+    words = text.split()
+    return words[0] if words else None
+
+
+def parse_adb_device_states(text: str | None) -> list[tuple[str, str]] | None:
+    """(serial, state) pairs from `adb devices`: device, unauthorized, offline, …"""
+    if text is None:
+        return None
+    devices: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0].startswith("*") or line.startswith("List of"):
+            continue
+        devices.append((fields[0], fields[1]))
+    return devices
+
+
+def parse_model_props(text: str | None) -> str | None:
+    """One `getprop` answer; None when the property is unset or unreadable."""
+    if text is None:
+        return None
+    return text.strip() or None
+
+
+class SinkInput(NamedTuple):
+    index: str
+    sink: str
+    volume: int | None
+    app: str | None
+
+
+def parse_sink_inputs(text: str | None) -> list[SinkInput] | None:
+    """Blocks of `pactl list sink-inputs`; None when the listing is unreadable."""
+    if text is None:
+        return None
+    entries: list[SinkInput] = []
+    index: str | None = None
+    sink = ""
+    app: str | None = None
+    volume: int | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Sink Input #"):
+            if index is not None:
+                entries.append(SinkInput(index, sink, volume, app))
+            index = stripped.split("#", 1)[1].strip()
+            sink, app, volume = "", None, None
+        elif index is None:
+            continue
+        elif stripped.startswith("Sink:"):
+            sink = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Volume:") and volume is None:
+            volume = parse_volume_percent(stripped)
+        elif stripped.startswith("application.name = "):
+            app = stripped.split("=", 1)[1].strip().strip('"')
+    if index is not None:
+        entries.append(SinkInput(index, sink, volume, app))
+    return entries
+
+
+def find_sink_input(inputs: list[SinkInput] | None,
+                    app: str = "scrcpy") -> SinkInput | None:
+    """The first sink-input owned by `app`; None when the listing has none."""
+    for entry in inputs or ():
+        if entry.app == app:
+            return entry
+    return None
+
+
+def routing_ok(sink: str | None, stream_sink: str | None) -> bool:
+    """Whether the bridge stream sits on the remap sink.
+
+    An unknown index (`None`: the listing failed) and an absent one (`""`: there
+    is no such sink) can never match, so neither may ever read as routed.
+    """
+    return bool(sink) and bool(stream_sink) and sink == stream_sink
+
+
+class AudioState(NamedTuple):
+    """What the panel may say about the audio server (S4).
+
+    `up` is the licence to print any reading at all: while it is false the box
+    claims no state word, no gain and no volume, because none was measured.
+    """
+    up: bool
+    word: str
+    cause: str
+    fix: str
+
+
+def audio_state(info: str | None) -> AudioState:
+    """Decide the audio server state from the probe answer only.
+
+    An answer must name a server: `pactl info` prints "Server Name" when the
+    server replies, and only a failure line when it does not. No answer, an
+    empty answer, or a failure message all mean the same thing: unknown, which
+    gets its own words and the command that fixes it (S4).
+    """
+    if info is None or "server name" not in info.lower():
+        return AudioState(False, AUDIO_SERVER_DOWN, AUDIO_CAUSE, AUDIO_FIX)
+    return AudioState(True, "", "", "")
+
+
+class MicState(NamedTuple):
+    """What the VIRTUAL MICROPHONE box may say: a word, a tone, and the fix."""
+    word: str
+    tone: str
+    cause: str
+    fix: str
+
+
+def mic_state(audio: AudioState, muted: bool | None, alive: bool,
+              unit_state: str | None) -> MicState:
+    """What the VIRTUAL MICROPHONE box may claim, from facts only (S4, S8).
+
+    A server that does not answer outranks everything else: the bridge unit can
+    look active while nothing can be read or written, and the box must not paint
+    `ACTIVE`, a gain or a volume in that state (S2, S4).
+    """
+    if not audio.up:
+        return MicState(audio.word, "bad", audio.cause, audio.fix)
+    if muted:
+        return MicState(MIC_MUTED, "warn", "", "")
+    if alive:
+        return MicState("ACTIVE", "ok", "", "")
+    return MicState(fmt_value(unit_state).upper(), "bad", "", "")
+
+
+def bridge_alive(pids: list[int], unit_state: str | None) -> bool:
+    """Whether the bridge counts as up: scrcpy running and its unit active.
+
+    One decision for the panel and the snapshot (S6): the two used to repeat the
+    expression, so they could drift apart.
+    """
+    return bool(pids) and unit_state == "active"
+
+
+def audio_buffer_ms() -> str:
+    """The audio buffer the bridge runs with: AUDIO_BUFFER, 50 ms by default."""
+    return os.environ.get("AUDIO_BUFFER", "50")
+
+
+def transport_of(serial: str | None) -> str | None:
+    """USB or Wi-Fi, from the serial adb reports; None when there is no device."""
+    if not serial:
+        return None
+    return "Wi-Fi" if ":" in serial else "USB"
+
+
+def address_of(serial: str | None) -> str | None:
+    """The host part of an adb serial; None when there is no device."""
+    return serial.split(":")[0] if serial else None
+
+
+class LinkState(NamedTuple):
+    """What the PHONE LINK box may say, from facts only (S5).
+
+    `routing` is True when the bridge stream sits on the remap sink and False
+    when it sits elsewhere, but None when the audio server did not answer: a
+    routing claim needs a server that answers (S4, S5). `model` and `service`
+    are None when they could not be read, which the box prints as `—`, never as
+    `-` and never as a word that looks like a state (S2, S5).
+    """
+    word: str
+    tone: str
+    cause: str
+    fix: str
+    model: str | None
+    transport: str | None
+    address: str | None
+    service: str | None
+    routing: bool | None
+
+
+def link_state(devices: list[tuple[str, str]] | None, model: str | None,
+               unit_state: str | None, audio: AudioState,
+               routed: bool) -> LinkState:
+    """Decide the phone link state from facts only: adb, the device, the unit.
+
+    Situations that used to read the same now have their own words (S5): adb
+    itself unusable (None: no adb binary, or a server that will not answer), a
+    device adb sees but cannot use (`unauthorized`, `offline`), a device in any
+    other state adb reports, and no device attached at all. The unusable ones
+    also name the cause and the command that fixes them, in the shape the audio
+    box uses (S4). Nothing unreadable is invented: it stays None.
+    """
+    routing = routed if audio.up else None
+    if devices is None:
+        return LinkState(LINK_NO_ADB, "bad", LINK_CAUSE_ADB, LINK_FIX_ADB,
+                         model, None, None, unit_state, routing)
+    ready = [serial for serial, state in devices if state == ADB_READY]
+    if ready:
+        serial = ready[0]
+        return LinkState(LINK_UP, "ok", "", "", model, transport_of(serial),
+                         address_of(serial), unit_state, routing)
+    if not devices:
+        return LinkState(LINK_DOWN, "bad", "", "", model, None, None,
+                         unit_state, routing)
+    serial, state = devices[0]
+    states = [state for _, state in devices]
+    if ADB_UNAUTHORIZED in states:
+        word, tone, cause, fix = (LINK_UNAUTHORIZED, "warn",
+                                  LINK_CAUSE_UNAUTHORIZED, LINK_FIX_UNAUTHORIZED)
+    elif ADB_OFFLINE in states:
+        word, tone, cause, fix = (LINK_OFFLINE, "bad", LINK_CAUSE_OFFLINE,
+                                  LINK_FIX_OFFLINE)
+    else:
+        # adb's own word for a state this module does not interpret: honest, and
+        # still distinguishable from CONNECTED and from DISCONNECTED.
+        word, tone, cause, fix = state.upper(), "warn", "", ""
+    return LinkState(word, tone, cause, fix, model, transport_of(serial),
+                     address_of(serial), unit_state, routing)
+
+
+def mic_value_line(volume: int | None, stream_gain: int | None) -> str:
+    """GAIN/VOLUME row for a state where neither can be read: dashes, not 0% (S2)."""
+    return (f"GAIN    {fmt_value(volume, '3d', '%', 4)}"
+            f"    VOLUME  {fmt_value(stream_gain, '3d', '%', 4)}")
+
+
+def mic_mute_note(mic: MicState) -> str:
+    """The trailing MUTED note `status` prints, taken from mic_state's word.
+
+    S6: the note used to be re-derived from the raw mute reading, so a stale
+    one could say MUTED while the panel's own decision said AUDIO SERVER DOWN.
+    """
+    return mic.word if mic.word == MIC_MUTED else ""
+
+
+class ControlResult(NamedTuple):
+    """Whether a control worked, and the one line the panel shows for it."""
+    ok: bool
+    message: str
+
+
+def control_outcome(readable: bool, write_ok: bool, success: str,
+                    detail: str = "",
+                    blocked: str = UNREADABLE_CONTROL) -> ControlResult:
+    """Decide whether a control may report success (S7).
+
+    Three outcomes, never merged: the current value could not be read, so no
+    write was attempted and the control says it cannot; the write itself failed,
+    so the panel reports that failure in pactl's own words; or the write worked
+    and the control keeps the wording it always had.
+    """
+    if not readable:
+        return ControlResult(False, blocked)
+    if not write_ok:
+        return ControlResult(False, f"pactl failed: {detail}" if detail
+                             else "pactl failed")
+    return ControlResult(True, success)
+
+
+def write_cmd(cmd: list[str], timeout: float = 3.0) -> tuple[bool, str]:
+    """Run a setter and report what happened: (worked, pactl's own words).
+
+    `run()` cannot serve here: it discards the exit status, so a refused write
+    would look like a success. This runner decides nothing; control_outcome()
+    owns that. A write is also evidence about the server, so the probe answer is
+    dropped and the next frame asks again.
+    """
+    CACHE.invalidate("audio")
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return False, str(exc)
+    if out.returncode == 0:
+        return True, ""
+    detail = (out.stderr or out.stdout).strip().splitlines()
+    return False, detail[-1] if detail else f"exit {out.returncode}"
+
+
+def audio_probe() -> str | None:
+    """One `pactl info` per refresh; None when the server does not answer.
+
+    Cached for AUDIO_TTL so the 120 ms frame loop does not fork pactl the whole
+    time, and short enough that a server that comes back is noticed without
+    restarting the panel (S4).
+    """
+    return CACHE.get("audio", AUDIO_TTL, lambda: query(["pactl", "info"]))
+
+
+def adb_devices() -> list[tuple[str, str]] | None:
+    """(serial, state) of every attached device; None when adb cannot answer."""
+    return CACHE.get("devices", 2.0,
+                     lambda: parse_adb_device_states(query(["adb", "devices"])))
+
+
+def adb_model() -> str | None:
+    def read() -> str | None:
         for prop in ("ro.product.marketname", "ro.product.odm.marketname",
                      "ro.product.model"):
-            value = run(["adb", "shell", "getprop", prop]).strip()
+            value = parse_model_props(query(["adb", "shell", "getprop", prop]))
             if value:
                 return value
-        return "-"
+        return None
     return CACHE.get("model", 30.0, read)
 
 
@@ -281,103 +687,105 @@ def bridge_pids() -> list[int]:
     return [int(p) for p in out.split() if p.isdigit()]
 
 
-def bridge_unit_state() -> str:
-    return run(["systemctl", "--user", "is-active", BRIDGE_UNIT]).strip() or "unknown"
+def bridge_unit_state() -> str | None:
+    return parse_unit_state(
+        query(["systemctl", "--user", "is-active", BRIDGE_UNIT]))
 
 
-def sink_index() -> str:
-    for line in run(["pactl", "list", "short", "sinks"]).splitlines():
+def sink_index() -> str | None:
+    """Index of the remap sink: "" when absent, None when pactl failed."""
+    text = query(["pactl", "list", "short", "sinks"])
+    if text is None:
+        return None
+    for line in text.splitlines():
         fields = line.split()
         if len(fields) > 1 and fields[1] == SINK:
             return fields[0]
     return ""
 
 
-def source_present() -> bool:
-    for line in run(["pactl", "list", "short", "sources"]).splitlines():
+def source_present() -> bool | None:
+    text = query(["pactl", "list", "short", "sources"])
+    if text is None:
+        return None
+    for line in text.splitlines():
         fields = line.split()
         if len(fields) > 1 and fields[1] == SOURCE:
             return True
     return False
 
 
-def bridge_stream() -> tuple[str, str]:
-    """(sink-input index, sink index) of the scrcpy playback stream."""
-    out = run(["pactl", "list", "sink-inputs"])
-    idx = ""
-    current = ""
-    for line in out.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Sink Input #"):
-            idx = stripped.split("#", 1)[1]
-        elif stripped.startswith("Sink:") and idx:
-            current = stripped.split(":", 1)[1].strip()
-        elif 'application.name = "scrcpy"' in stripped:
-            return idx, current
-    return "", ""
+def sink_inputs() -> list[SinkInput] | None:
+    return CACHE.get("sinputs", 1.0, lambda: parse_sink_inputs(
+        query(["pactl", "list", "sink-inputs"])))
 
 
-def percent(text: str) -> int:
-    """Extract the aggregate percentage from `pactl get-*-volume` output."""
-    for line in text.splitlines():
-        if "%" in line:
-            chunk = line.split("/")
-            for part in chunk:
-                part = part.strip()
-                if part.endswith("%"):
-                    digits = "".join(c for c in part if c.isdigit())
-                    if digits:
-                        return int(digits)
-    return 0
+def bridge_stream() -> SinkInput | None:
+    """The scrcpy playback stream; None when there is none or it is unreadable."""
+    return find_sink_input(sink_inputs())
 
 
-def source_volume() -> int:
-    return CACHE.get("vol", 1.0, lambda: percent(
-        run(["pactl", "get-source-volume", SOURCE])))
+def routed_now() -> bool:
+    """Whether the bridge stream sits on the remap sink, read in one place.
+
+    Both renderers call this instead of repeating the two reads and the
+    comparison, so they cannot gather the routing facts differently (S6).
+    """
+    stream = bridge_stream()
+    return routing_ok(sink_index(), stream.sink if stream else "")
 
 
-def source_muted() -> bool:
-    return CACHE.get("mute", 1.0, lambda: "yes" in run(
-        ["pactl", "get-source-mute", SOURCE]).lower())
+def source_volume() -> int | None:
+    return CACHE.get("vol", 1.0, lambda: parse_volume_percent(
+        query(["pactl", "get-source-volume", SOURCE])))
 
 
-def stream_volume() -> int:
+def source_muted() -> bool | None:
+    return CACHE.get("mute", 1.0, lambda: parse_mute(
+        query(["pactl", "get-source-mute", SOURCE])))
+
+
+def stream_volume() -> int | None:
     # `pactl get-sink-input-volume` does not exist in every pactl release
     # ("No valid command specified"), so the volume is read from the listing.
-    def read() -> int:
-        idx, _ = bridge_stream()
-        if not idx:
-            return 0
-        block = run(["pactl", "list", "sink-inputs"])
-        current = ""
-        for line in block.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("Sink Input #"):
-                current = stripped.split("#", 1)[1]
-            elif current == idx and stripped.startswith("Volume:"):
-                return percent(stripped)
-        return 0
+    def read() -> int | None:
+        stream = bridge_stream()
+        return stream.volume if stream else None
     return CACHE.get("svol", 1.0, read)
 
 
-def set_source_volume(value: int) -> None:
-    run(["pactl", "set-source-volume", SOURCE, f"{max(0, min(100, value))}%"])
+def set_source_volume(value: int) -> ControlResult:
+    target = max(0, min(100, value))
+    work_ok, detail = write_cmd(["pactl", "set-source-volume", SOURCE,
+                                 f"{target}%"])
     CACHE.invalidate("vol")
+    return control_outcome(True, work_ok, f"gain {target}%", detail)
 
 
-def set_stream_volume(value: int) -> None:
-    idx, _ = bridge_stream()
-    if idx:
-        run(["pactl", "set-sink-input-volume", idx,
-             f"{max(0, min(100, value))}%"])
+def set_stream_volume(value: int) -> ControlResult:
+    stream = bridge_stream()
     CACHE.invalidate("svol")
+    CACHE.invalidate("sinputs")
+    if not stream:
+        # There is nothing to write to: say what is missing, never a success.
+        return control_outcome(False, False, "", "", NO_BRIDGE_STREAM)
+    target = max(0, min(100, value))
+    work_ok, detail = write_cmd(["pactl", "set-sink-input-volume", stream.index,
+                                 f"{target}%"])
+    return control_outcome(True, work_ok, f"volume {target}%", detail)
 
 
-def toggle_mute() -> tuple[bool, str]:
+def toggle_mute() -> ControlResult:
     muted = source_muted()
-    run(["pactl", "set-source-mute", SOURCE, "no" if muted else "yes"])
+    if muted is None:
+        # No reading: any new value would be invented, so nothing is written.
+        CACHE.invalidate("mute")
+        return control_outcome(False, False, "")
+    work_ok, detail = write_cmd(
+        ["pactl", "set-source-mute", SOURCE, "no" if muted else "yes"])
     CACHE.invalidate("mute")
-    return True, "unmuted" if muted else "MUTED"
+    return control_outcome(True, work_ok, "unmuted" if muted else "MUTED",
+                           detail)
 
 
 # ------------------------------------------------------------------------- actions
@@ -406,7 +814,8 @@ def reconnect_phone() -> tuple[bool, str]:
 
 def fix_routing() -> tuple[bool, str]:
     want = sink_index()
-    have = bridge_stream()[1]
+    stream = bridge_stream()
+    have = stream.sink if stream else ""
     if not want:
         return False, f"{SINK} missing"
     if not have:
@@ -419,6 +828,34 @@ def fix_routing() -> tuple[bool, str]:
 
 # --------------------------------------------------------------------------- meter
 
+class MeterState(NamedTuple):
+    """What the INPUT MONITOR may truthfully say about the capture (S2, S3).
+
+    `measuring` is the only licence to draw a level: when it is false the level
+    is None and the panel must print `—`, never a floor value that a silent room
+    would also produce. `word` names the situation in words when not measuring.
+    """
+    measuring: bool
+    word: str
+    level: float | None
+
+
+def meter_state(available: bool, running: bool, windows: int,
+                peak: float | None) -> MeterState:
+    """Decide the meter state from facts only: no capture, not started, or real.
+
+    Three situations must never look alike: `parec` missing (nothing can be
+    captured), a capture with no window yet or no longer running (nothing is
+    being captured), and a running capture, whose measured value is data even
+    when it sits at FLOOR_DB.
+    """
+    if not available:
+        return MeterState(False, NO_CAPTURE_TOOL, None)
+    if not running or windows <= 0 or peak is None:
+        return MeterState(False, NO_SIGNAL, None)
+    return MeterState(True, "", peak)
+
+
 class LevelMeter(threading.Thread):
     """Rolling windows of the virtual microphone, for the waveform and the level."""
 
@@ -426,15 +863,19 @@ class LevelMeter(threading.Thread):
         super().__init__(daemon=True)
         self._stop = threading.Event()
         self._proc: subprocess.Popen[bytes] | None = None
+        # Whether a capture tool exists at all: the meter cannot report a
+        # measurement it has no tool to take (S3). Read before the thread runs.
+        self.available = shutil.which("parec") is not None
         self.slots: collections.deque[float] = collections.deque(
             [FLOOR_DB] * WAVE_SLOTS, maxlen=WAVE_SLOTS)
-        self.peak_db = FLOOR_DB
-        self.rms_db = FLOOR_DB
+        # None, not the floor: nothing has been measured until a window is read.
+        self.peak_db: float | None = None
+        self.rms_db: float | None = None
         self.windows = 0
         self.running = False
 
     def run(self) -> None:
-        if not shutil.which("parec"):
+        if not self.available:
             return
         window_bytes = SAMPLE_RATE * BAR_WINDOW_MS // 1000 * 2
         try:
@@ -481,8 +922,8 @@ class LevelMeter(threading.Thread):
 
 # ------------------------------------------------------------------------- drawing
 
-def db_fraction(db: float) -> float:
-    if db <= FLOOR_DB:
+def db_fraction(db: float | None) -> float:
+    if db is None or db <= FLOOR_DB:
         return 0.0
     return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
 
@@ -497,6 +938,20 @@ def wave_line(slots: list[float], width: int) -> str:
     return "".join(out)
 
 
+def wave_row(state: MeterState, slots: list[float], width: int) -> str:
+    """Waveform row for a state: blank when nothing was measured (S2, S3).
+
+    A floor-filled bar is exactly what a silent room renders, so it must never
+    stand in for a missing measurement; the width is the same either way.
+    """
+    return wave_line(slots, width) if state.measuring else " " * width
+
+
+def level_row(state: MeterState, width: int) -> str:
+    """Level bar row for a state: blank when nothing was measured (S2, S3)."""
+    return level_bar(state.level, width) if state.measuring else " " * width
+
+
 def level_bar(db: float, width: int) -> str:
     filled = int(round(db_fraction(db) * width))
     return "█" * filled + "░" * (width - filled)
@@ -506,24 +961,75 @@ def truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
-def connection_lines(devices: list[str]) -> list[tuple[str, str, str]]:
-    """(label, value, tone) rows for the CONNECTION panel."""
-    rows: list[tuple[str, str, str]] = []
-    if devices:
-        peer = devices[0]
-        kind = "Wi-Fi" if ":" in peer else "USB"
-        host = peer.split(":")[0]
-        rows.append(("state", "CONNECTED", "ok"))
-        rows.append(("device", truncate(adb_model(), 20), "plain"))
-        rows.append(("transport", kind, "plain"))
-        rows.append(("address", host, "plain"))
+def footer_action_line() -> str:
+    """First footer line: every action key the loop handles, in its old style.
+
+    P7: `[R]` was handled but never advertised. The line keeps the cells of the
+    original seven bindings; the keys that do not fit move to the second line
+    instead of being clipped by the frame edge.
+    """
+    return ("[C] Connect [X] Stop [M] Mute [A] Reroute "
+            "[T] Theme [D] Devices [Q] Quit")
+
+
+def footer_nav(focus: str) -> list[tuple[str, str]]:
+    """Second footer line as (text, tone) segments, with the focus marked.
+
+    P7: `[R]`, `[Tab]` and the nudge keys are handled but were never shown. The
+    line stops one cell before FOOTER_MSG_COL so a message never lands on it,
+    which is why the words "focus gain" gave way to the emphasis on the name.
+    `-`/`_` and `+`/`=` are the same ±5% nudge as the arrows, just as `c`/`C`
+    are the same key; naming them would take three cells the message column
+    needs, so the arrows are the ones advertised.
+    """
+    segments: list[tuple[str, str]] = [("[R] Reconnect [Tab] ", "dim")]
+    for index, name in enumerate(("gain", "volume")):
+        segments.append((name, "accent" if name == focus else "dim"))
+        if index == 0:
+            segments.append(("/", "dim"))
+    segments.append((" [←→] ±5%", "dim"))
+    return segments
+
+
+def footer_nav_text(focus: str) -> str:
+    """The second footer line as one string, for measuring and for tests."""
+    return "".join(text for text, _ in footer_nav(focus))
+
+
+def routing_claim(link: LinkState) -> tuple[str, str]:
+    """(text, tone) of the routing line, shared by the box and by `status`.
+
+    S6: the words `ok`, `WRONG` and the unknown dash used to be re-derived by
+    the snapshot, which could disagree with the box about them.
+    """
+    if link.routing is None:
+        return f"routing {UNKNOWN}", "dim"
+    return ("routing ok", "ok") if link.routing else ("routing WRONG", "bad")
+
+
+def link_rows(link: LinkState) -> list[tuple[str, str, str]]:
+    """(label, value, tone) rows of the PHONE LINK box: seven rows, always.
+
+    The four fields keep their places and the routing line stays last. The two
+    rows between them carry either the diagnosis (cause and fix) or the bridge
+    unit state and the buffer setting. Seven is what the box holds, so changed
+    words never move the frame (S8).
+    """
+    rows: list[tuple[str, str, str]] = [
+        ("state", link.word, link.tone),
+        ("device", truncate(fmt_value(link.model), 20), "plain"),
+        ("transport", fmt_value(link.transport), "plain"),
+        ("address", fmt_value(link.address), "plain"),
+    ]
+    if link.cause:
+        rows.append(("", link.cause, "warn"))
+        rows.append(("", link.fix, "dim"))
     else:
-        rows.append(("state", "DISCONNECTED", "bad"))
-        rows.append(("device", "-", "plain"))
-        rows.append(("transport", "-", "plain"))
-        rows.append(("address", "-", "plain"))
-    buffer_ms = os.environ.get("AUDIO_BUFFER", "50")
-    rows.append(("buffer", f"{buffer_ms} ms", "plain"))
+        service_tone = "plain" if link.service else "dim"
+        rows.append(("service", fmt_value(link.service), service_tone))
+        rows.append(("buffer", f"{audio_buffer_ms()} ms", "plain"))
+    routing, routing_tone = routing_claim(link)
+    rows.append(("", routing, routing_tone))
     return rows
 
 
@@ -652,15 +1158,18 @@ def interactive() -> int:
                 edge(row, left + frame_w - 1)
 
             # --- data -----------------------------------------------------
-            devices = CACHE.get("devices", 2.0, adb_devices)
+            # The server answer comes first: without it nothing else is known (S4).
+            audio = audio_state(audio_probe())
+            devices = adb_devices()
             pids = bridge_pids()
             state = bridge_unit_state()
-            want = sink_index()
-            have = bridge_stream()[1]
+            model = adb_model()
+            routed = routed_now()
             volume = source_volume()
             muted = source_muted()
             stream_gain = stream_volume()
-            buffer_ms = os.environ.get("AUDIO_BUFFER", "50")
+            # One decision from facts, shared with the `status` snapshot (S5).
+            link = link_state(devices, model, state, audio, routed)
 
             # --- two panels (rows 5..14) ----------------------------------
             panel_y = 5
@@ -670,28 +1179,38 @@ def interactive() -> int:
             draw_box(stdscr, top + panel_y, left_x, panel_h, col_w, color=tone("border"))
             draw_box(stdscr, top + panel_y, right_x, panel_h, col_w, color=tone("border"))
 
-            conn = connection_lines(devices)
+            conn = link_rows(link)
             for i, (label, value, kind) in enumerate(conn):
                 row = panel_y + 1 + i
                 if label == "state":
                     put(row, left_x + 2, "● " + value, tone(kind) | curses.A_BOLD)
-                else:
+                elif label:
                     put(row, left_x + 2, f"{label:<10}", tone("dim"))
-                    put(row, left_x + 13, value, tone("plain"))
-            routing_dot = "ok" if have == want else "WRONG"
-            put(panel_y + panel_h - 2, left_x + 2, f"routing {routing_dot}",
-                tone("ok") if routing_dot == "ok" else tone("bad"))
+                    put(row, left_x + 13, value, tone(kind))
+                else:
+                    put(row, left_x + 2, value, tone(kind))
 
             wave_w = max(8, col_w - 6)
+            # One decision, taken from facts: never draw a level nobody measured
+            # and never hide a measured floor (S2, S3).
+            capture = meter_state(meter.available, meter.running, meter.windows,
+                                 meter.peak_db)
             slots = meter.snapshot()
-            peak = meter.peak_db
-            put(panel_y + 2, right_x + 2, wave_line(slots, wave_w), level_tone(peak))
+            bar_tone = (level_tone(capture.level) if capture.measuring
+                        else tone("dim"))
+            put(panel_y + 2, right_x + 2, wave_row(capture, slots, wave_w), bar_tone)
             put(panel_y + 4, right_x + 2, "INPUT LEVEL", tone("dim"))
+            if capture.word:
+                put(panel_y + 4, right_x + 2 + len("INPUT LEVEL") + 2,
+                    capture.word, tone("warn"))
             bar_w = max(6, wave_w - 11)
-            put(panel_y + 5, right_x + 2, level_bar(peak, bar_w), level_tone(peak))
-            put(panel_y + 5, right_x + 2 + bar_w + 1, f"{peak:5.1f} dB", tone("plain"))
-            put(panel_y + 6, right_x + 2, f"RMS {meter.rms_db:5.1f} dB   "
-                f"buffer {buffer_ms} ms", tone("dim"))
+            put(panel_y + 5, right_x + 2, level_row(capture, bar_w), bar_tone)
+            put(panel_y + 5, right_x + 2 + bar_w + 1,
+                fmt_value(capture.level, "5.1f", " dB", 8), tone("plain"))
+            rms = meter.rms_db if capture.measuring else None
+            put(panel_y + 6, right_x + 2,
+                f"RMS {fmt_value(rms, '5.1f', ' dB', 8)}   "
+                f"buffer {audio_buffer_ms()} ms", tone("dim"))
 
             # --- virtual microphone (rows 16..21) -------------------------
             mic_y = panel_y + panel_h + 2
@@ -699,43 +1218,71 @@ def interactive() -> int:
             put(mic_y - 1, left_x, "VIRTUAL MICROPHONE", tone("label"))
             draw_box(stdscr, top + mic_y, left_x, 6, mic_w, color=tone("border"))
 
-            alive = bool(pids) and state == "active"
-            if muted:
-                status, dot = "MUTED", "warn"
-            elif alive:
-                status, dot = "ACTIVE", "ok"
-            else:
-                status, dot = state.upper(), "bad"
-            put(mic_y + 1, left_x + 2, "●", tone(dot))
+            # One decision from facts: a server that does not answer outranks the
+            # word, the gain and the volume the box would otherwise print (S4).
+            mic = mic_state(audio, muted, bridge_alive(pids, state), state)
+            put(mic_y + 1, left_x + 2, "●", tone(mic.tone))
             put(mic_y + 1, left_x + 4, "Phone-Mic", curses.A_BOLD)
             put(mic_y + 1, left_x + 15, "PipeWire remap source", tone("dim"))
-            put(mic_y + 1, left_x + mic_w - 3 - len(status), status,
-                tone(dot) | curses.A_BOLD)
-            put(mic_y + 2, left_x + 2, f"service {state}"
-                + (f" · pid {pids[0]}" if pids else "") + f" · routing {routing_dot}",
-                tone("ok") if routing_dot == "ok" else tone("bad"))
+            put(mic_y + 1, left_x + mic_w - 3 - len(mic.word), mic.word,
+                tone(mic.tone) | curses.A_BOLD)
+            if mic.cause:
+                # S4: the cause and the command that fixes it, in place of the
+                # controls, whose values cannot be read at all right now.
+                put(mic_y + 2, left_x + 2, mic.cause, tone("warn"))
+                put(mic_y + 3, left_x + 2, mic.fix, tone("dim"))
+                put(mic_y + 4, left_x + 2, mic_value_line(volume, stream_gain),
+                    tone("dim"))
+            else:
+                routing, routing_tone = routing_claim(link)
+                put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
+                    + (f" · pid {pids[0]}" if pids else "")
+                    + f" · {routing}", tone(routing_tone))
 
-            def slider(row: int, label: str, value: int, selected: bool) -> None:
-                track_w = 16
-                filled = int(round(track_w * value / 100))
-                track = "━" * filled + "●" + "━" * (track_w - filled)
-                put(row, left_x + 2, f"{label:<8}",
-                    tone("accent") if selected else tone("dim"))
-                put(row, left_x + 11, track, tone("ok") if selected else tone("dim"))
-                put(row, left_x + 29, f"{value:3d}%", tone("plain"))
+                def slider(row: int, label: str, value: int | None,
+                           selected: bool) -> None:
+                    track_w = 16
+                    if value is None:
+                        # No readable volume: leave the track blank rather than flag
+                        # a position nobody measured, and print a dash, not 0% (S2).
+                        track = " " * track_w
+                    else:
+                        filled = int(round(track_w * value / 100))
+                        track = "━" * filled + "●" + "━" * (track_w - filled)
+                    put(row, left_x + 2, f"{label:<8}",
+                        tone("accent") if selected else tone("dim"))
+                    put(row, left_x + 11, track,
+                        tone("ok") if selected else tone("dim"))
+                    put(row, left_x + 29, fmt_value(value, "3d", "%", 4),
+                        tone("plain"))
 
-            slider(mic_y + 3, "GAIN", volume, focus == "gain")
-            slider(mic_y + 4, "VOLUME", stream_gain, focus == "volume")
+                slider(mic_y + 3, "GAIN", volume, focus == "gain")
+                slider(mic_y + 4, "VOLUME", stream_gain, focus == "volume")
+
+            def nudge(delta: int) -> None:
+                """Step the focused control; unknown volume refuses instead of guessing."""
+                value = volume if focus == "gain" else stream_gain
+                if value is None:
+                    # S7: no reading, so no write and no claim of one either.
+                    say(control_outcome(False, False, "").message)
+                    return
+                if focus == "gain":
+                    result = set_source_volume(value + delta)
+                else:
+                    result = set_stream_volume(value + delta)
+                if not result.ok:
+                    say(result.message)
 
             # --- footer (rows 23..26) -------------------------------------
             frame_row(frame_h - 4, TEE_L, TEE_R)
-            put(frame_h - 3, left + 3,
-                "[C] Connect [X] Stop [M] Mute [A] Reroute [T] Theme [D] Devices [Q] Quit",
+            put(frame_h - 3, left + FOOTER_TEXT_COL, footer_action_line(),
                 tone("dim"))
-            put(frame_h - 2, left + 3,
-                f"[Tab] gain/volume  [←→] ±5%   ·   focus {focus}", tone("dim"))
+            col = left + FOOTER_TEXT_COL
+            for text, kind in footer_nav(focus):
+                put(frame_h - 2, col, text, tone(kind))
+                col += len(text)
             if message and time.monotonic() - message_at < 6:
-                put(frame_h - 2, left + 3 + 42, message, tone("warn"))
+                put(frame_h - 2, left + FOOTER_MSG_COL, message, tone("warn"))
             frame_row(frame_h - 1, BL, BR)
 
             if picker:
@@ -762,7 +1309,8 @@ def interactive() -> int:
                         put(row, px + 4, f"{marker} {name}", attr)
                         row += 1
                         index += 1
-                put(py + ph - 2, px + 2, "↵ apply · esc close", tone("dim"))
+                put(py + ph - 2, px + 2, "j/k preview · ↵ apply · esc cancel",
+                    tone("dim"))
 
             if show_devices:
                 rows = [line.split()[1] for line in
@@ -809,14 +1357,19 @@ def interactive() -> int:
             if picker:
                 if ch in (curses.KEY_UP, ord("k")):
                     picker_sel = (picker_sel - 1) % len(ALL_THEMES)
+                    PALETTE.apply(ALL_THEMES[picker_sel])   # preview only
                 elif ch in (curses.KEY_DOWN, ord("j")):
                     picker_sel = (picker_sel + 1) % len(ALL_THEMES)
+                    PALETTE.apply(ALL_THEMES[picker_sel])   # preview only
                 elif ch in (10, 13, curses.KEY_ENTER):
                     PALETTE.apply(ALL_THEMES[picker_sel])
                     save_theme(ALL_THEMES[picker_sel])
                     picker = False
                     say(f"tema: {ALL_THEMES[picker_sel]}")
                 elif ch in (27, ord("t"), ord("T"), ord("q"), ord("Q")):
+                    # Closing without confirming must not keep a preview: restore
+                    # what was saved, or the choice looks applied and is not.
+                    PALETTE.apply(picker_origin)
                     picker = False
                 continue
             if show_devices and ch != -1:
@@ -832,11 +1385,12 @@ def interactive() -> int:
             elif ch in (ord("x"), ord("X")):
                 say(stop_bridge()[1])
             elif ch in (ord("m"), ord("M")):
-                say(toggle_mute()[1])
+                say(toggle_mute().message)
             elif ch in (ord("a"), ord("A")):
                 say(fix_routing()[1])
             elif ch in (ord("t"), ord("T")):
                 picker_sel = ALL_THEMES.index(PALETTE.name)
+                picker_origin = PALETTE.name
                 picker = True
             elif ch in (ord("d"), ord("D")):
                 show_devices = True
@@ -845,9 +1399,9 @@ def interactive() -> int:
             elif ch == 9:
                 focus = "volume" if focus == "gain" else "gain"
             elif ch in (curses.KEY_LEFT, ord("-"), ord("_")):
-                set_source_volume(volume - 5) if focus == "gain" else set_stream_volume(stream_gain - 5)
+                nudge(-5)
             elif ch in (curses.KEY_RIGHT, ord("+"), ord("=")):
-                set_source_volume(volume + 5) if focus == "gain" else set_stream_volume(stream_gain + 5)
+                nudge(+5)
 
     try:
         curses.wrapper(draw)
@@ -863,13 +1417,21 @@ def once() -> int:
     while meter.windows < 4 and time.monotonic() < deadline:
         time.sleep(0.1)
 
+    audio = audio_state(audio_probe())
     devices = adb_devices()
     pids = bridge_pids()
     state = bridge_unit_state()
-    want = sink_index()
-    have = bridge_stream()[1]
+    model = adb_model()
+    routed = routed_now()
+    volume = source_volume()
+    stream_gain = stream_volume()
+    muted = source_muted()
+    # The same decision the panel takes, from the same helper (S5, S6).
+    link = link_state(devices, model, state, audio, routed)
+    # The same decision the panel takes, from the same helper (S2, S3).
+    capture = meter_state(meter.available, meter.running, meter.windows,
+                          meter.peak_db)
     slots = meter.snapshot()
-    peak = meter.peak_db
     meter.stop()
 
     width = 62
@@ -882,23 +1444,36 @@ def once() -> int:
     print(TEE_L + H * (width - 2) + TEE_R)
     row("")
     row("  PHONE LINK")
-    for label, value, kind in connection_lines(devices):
-        row(f"   ● {value}" if label == "state" else f"     {label:<10} {value}")
+    for label, value, kind in link_rows(link):
+        if label == "state":
+            row(f"   ● {value}")
+        elif label:
+            row(f"     {label:<10} {value}")
+        else:
+            row(f"     {value}")
     row("")
-    row("  INPUT MONITOR")
-    row("   " + wave_line(slots, width - 6))
-    row("   " + level_bar(peak, 20) + f" {peak:5.1f} dB")
+    row("  INPUT MONITOR" + (f"   {capture.word}" if capture.word else ""))
+    row("   " + wave_row(capture, slots, width - 6))
+    row("   " + level_row(capture, 20) + " "
+        + fmt_value(capture.level, "5.1f", " dB"))
     row("")
     row("  VIRTUAL MICROPHONE")
-    alive = bool(pids) and state == "active"
-    routing = "ok" if have == want else "WRONG"
-    row(f"   ● Phone-Mic   {'ACTIVE' if alive else state.upper()}   routing {routing}")
-    row(f"     service {state}" + (f" · pid {pids[0]}" if pids else ""))
-    row(f"   GAIN    {source_volume():3d}%    VOLUME  {stream_volume():3d}%"
-        f"    {'MUTED' if source_muted() else ''}")
+    # The same decisions the panel takes, from the same helpers (S4, S6, S7).
+    mic = mic_state(audio, muted, bridge_alive(pids, state), state)
+    claim, _ = routing_claim(link)
+    row(f"   ● Phone-Mic   {mic.word}   {claim}")
+    if mic.cause:
+        row(f"     {mic.cause}")
+        row(f"     {mic.fix}")
+    else:
+        row(f"     service {fmt_value(state)}"
+            + (f" · pid {pids[0]}" if pids else ""))
+    row(f"   {mic_value_line(volume, stream_gain)}"
+        f"    {mic_mute_note(mic)}")
     row("")
     row("  [C] Connect  [X] Stop  [M] Mute  [D] Devices  [Q] Quit")
     print(BL + H * (width - 2) + BR)
+    print(f"  theme {PALETTE.name}")
     return 0
 
 
