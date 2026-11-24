@@ -48,15 +48,17 @@ r2b() { # R2b: pipewire itself accepts the fragment (skipped without pipewire)
         pw-config -N merge context.objects | grep -q phonemic_sink; }
 ck "R2b pipewire parses the fragment" r2b
 
-r3() { # R3: the unit loads the source before starting and keeps its directives
+r3() { # R3: the unit is templated, loads the source first, keeps its directives
     local u="$ROOT/packaging/phone-mic-bridge.service"
-    grep -qx 'ExecStartPre=%h/Proyectos/phone-mic/scripts/load-virtual-mic.sh' "$u" &&
+    grep -qx 'ExecStartPre=@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh' "$u" &&
+    ! grep -q '%h/' "$u" &&
+    grep -qF 's|@PHONE_MIC_ROOT@|$HERE|g' "$ROOT/packaging/install.sh" &&
     grep -qx 'After=pipewire.service wireplumber.service pipewire-pulse.service' "$u" &&
     grep -qx 'Wants=pipewire.service pipewire-pulse.service' "$u" &&
     grep -qx 'StartLimitIntervalSec=0' "$u" &&
     grep -qx 'Restart=always' "$u" && grep -qx 'Nice=-5' "$u" &&
     grep -qx 'WantedBy=default.target' "$u" && test -x "$ROOT/scripts/load-virtual-mic.sh"; }
-ck "R3 unit runs the source script and keeps its directives" r3
+ck "R3 unit templated, source loaded first, directives kept" r3
 
 r4() { # R4: never enabled at login, health check guarded and never fatal
     local i="$ROOT/packaging/install.sh"
@@ -81,8 +83,11 @@ SH
     chmod +x "$T/b/"*
     env -i PATH="$T/b:/usr/bin:/bin" HOME="$T/home" TMPDIR="$T" \
         bash "$ROOT/packaging/install.sh" >/dev/null 2>"$T/err" &&
-    grep -q 'the audio server does not answer' "$T/err"; }
-ck "R4b dead audio server: install still succeeds with a warning" r4b
+    grep -q 'the audio server does not answer' "$T/err" &&
+    grep -qF "ExecStartPre=$ROOT/scripts/load-virtual-mic.sh" \
+        "$T/home/.config/systemd/user/phone-mic-bridge.service" &&
+    ! grep -q '@PHONE_MIC_ROOT@' "$T/home/.config/systemd/user/phone-mic-bridge.service"; }
+ck "R4b dead audio server: install still succeeds and templates the unit" r4b
 
 r5() { # R5: persistent vs runtime documented, stale claim gone
     local r="$ROOT/README.md"

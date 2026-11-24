@@ -1,6 +1,6 @@
 [Unit]
 Description=phone-mic bridge (phone microphone into Phone-Mic)
-Documentation=file:%h/Proyectos/phone-mic/README.md
+Documentation=file:@PHONE_MIC_ROOT@/README.md
 After=pipewire.service wireplumber.service pipewire-pulse.service
 Wants=pipewire.service pipewire-pulse.service
 # The phone is not always reachable: retrying forever is the intended behaviour,
@@ -18,11 +18,15 @@ Type=simple
 # Failing this step is deliberate: running the bridge without the source would
 # forward audio into a sink nobody can capture from, and a silent microphone is
 # worse than a visible restart loop.
-ExecStartPre=%h/Proyectos/phone-mic/scripts/load-virtual-mic.sh
+# @PHONE_MIC_ROOT@ is substituted by packaging/install.sh with the directory the
+# checkout actually lives in. Never hardcode a path here: a wrong one fails
+# ExecStartPre before the bridge starts, and a bridge that cannot start never
+# creates phone_mic, so the microphone disappears with no audio error to point at.
+ExecStartPre=@PHONE_MIC_ROOT@/scripts/load-virtual-mic.sh
 # connect first, then forward: every restart reconnects adb (last known port,
 # then mDNS discovery) before resuming audio. Chained here so the bridge needs no
 # desktop launcher.
-ExecStart=/bin/sh -c '%h/Proyectos/phone-mic/scripts/connect-phone.sh && exec %h/Proyectos/phone-mic/scripts/scrcpy-mic.sh' 
+ExecStart=/bin/sh -c '@PHONE_MIC_ROOT@/scripts/connect-phone.sh && exec @PHONE_MIC_ROOT@/scripts/scrcpy-mic.sh' 
 # A dropped adb link, a phone that went to sleep or a scrcpy crash all end this
 # process; restarting runs scripts/connect-phone.sh again, which retries the last
 # known port and then discovers the advertised service over mDNS.

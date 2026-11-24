@@ -47,7 +47,12 @@ WRAPPER
 chmod 0755 "$BIN_DIR/phone-mic"
 
 echo "== install the bridge service"
-install -m 0644 "$HERE/packaging/phone-mic-bridge.service" "$UNIT_DIR/phone-mic-bridge.service"
+# The unit ships with @PHONE_MIC_ROOT@ placeholders: substitute the real checkout
+# path here. install.sh may run from any directory, and a wrong path fails
+# ExecStartPre before the bridge ever starts.
+sed "s|@PHONE_MIC_ROOT@|$HERE|g" "$HERE/packaging/phone-mic-bridge.service" \
+    > "$UNIT_DIR/phone-mic-bridge.service"
+chmod 0644 "$UNIT_DIR/phone-mic-bridge.service"
 systemctl --user daemon-reload
 # Deliberately not enabled: while it runs it captures the phone microphone the
 # whole time. Start it with 'phone-mic start' (or 'i' in the panel).
