@@ -906,6 +906,119 @@ class OnceSnapshotTest(unittest.TestCase):
             if "device" in line:
                 self.assertNotIn("-", line.replace("device", ""), line)
 
+    def test_the_mic_line_repeats_the_routing_word_the_panel_prints(self):
+        # S6: with no answer from the server the link box prints `routing —`,
+        # so the snapshot's own mic line may not go silent about it instead.
+        tui.audio_probe = lambda: PACTL_INFO_DOWN
+        text = self.snapshot(ADB_ONE_READY_WIFI)
+        mic_line = [line for line in text.splitlines() if "Phone-Mic" in line]
+        self.assertEqual(len(mic_line), 1, text)
+        self.assertIn(f"routing {tui.UNKNOWN}", mic_line[0])
+
+    def test_the_snapshot_never_says_muted_when_the_panel_does_not(self):
+        # S6: a dead server outranks everything (S4), so a stale mute reading
+        # must not add a MUTED word the panel's own decision does not say.
+        tui.audio_probe = lambda: PACTL_INFO_DOWN
+        tui.source_muted = lambda: True
+        text = self.snapshot(ADB_ONE_READY_WIFI)
+        self.assertIn(tui.AUDIO_SERVER_DOWN, text)
+        self.assertNotIn("MUTED", text)
+
+    def test_the_muted_note_still_follows_a_muted_panel_word(self):
+        # PRESERVE: a genuinely muted source keeps the note it always printed.
+        tui.source_muted = lambda: True
+        text = self.snapshot(ADB_ONE_READY_WIFI)
+        self.assertIn("MUTED", text)
+
+
+class RoutingClaimTest(unittest.TestCase):
+    """S6: one function owns the routing words, for the box and for `status`."""
+
+    def claim(self, audio, routed):
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio, routed)
+        return tui.routing_claim(link)
+
+    def test_a_routed_stream_says_ok(self):
+        self.assertEqual(self.claim(audio_up(), True), ("routing ok", "ok"))
+
+    def test_a_stream_elsewhere_says_wrong(self):
+        self.assertEqual(self.claim(audio_up(), False),
+                         ("routing WRONG", "bad"))
+
+    def test_a_silent_server_says_unknown(self):
+        self.assertEqual(self.claim(audio_down(), True),
+                         (f"routing {tui.UNKNOWN}", "dim"))
+
+    def test_the_claim_is_the_last_row_of_the_box(self):
+        # PRESERVE: the box's routing line still prints exactly this text.
+        link = tui.link_state(ADB_ONE_READY_WIFI, "Redmi Note 13", "active",
+                              audio_up(), False)
+        self.assertEqual(rows_of(link)[-1], ("", *tui.routing_claim(link)))
+
+
+class BridgeAliveTest(unittest.TestCase):
+    """S6: whether the bridge counts as alive is decided in one place."""
+
+    def test_scrcpy_on_an_active_unit_is_alive(self):
+        self.assertTrue(tui.bridge_alive([1234], "active"))
+
+    def test_a_unit_that_is_not_active_is_not_alive(self):
+        for unit in ("inactive", "failed", "activating", None):
+            self.assertFalse(tui.bridge_alive([1234], unit), unit)
+
+    def test_no_scrcpy_is_not_alive(self):
+        self.assertFalse(tui.bridge_alive([], "active"))
+
+
+class FooterTest(unittest.TestCase):
+    """P7/S8: the footer names every handled key, inside the default frame."""
+
+    # Every action key and the focus key the main input loop acts on, as the
+    # footer must name them. `-`/`_` and `+`/`=` are the same nudge as the
+    # arrows, like `c`/`C` are the same key, so the footer names the arrows once.
+    KEYS = ("[C]", "[X]", "[M]", "[A]", "[T]", "[D]", "[R]", "[Q]",
+            "[Tab]")
+    NUDGE = "[←→] ±5%"
+    # The seven bindings the footer advertised before P7.
+    OLD_KEYS = ("[C] Connect", "[X] Stop", "[M] Mute", "[A] Reroute",
+                "[T] Theme", "[D] Devices", "[Q] Quit")
+
+    def text(self, focus="gain"):
+        return tui.footer_action_line() + tui.footer_nav_text(focus)
+
+    def test_every_handled_key_is_named(self):
+        for key in self.KEYS:
+            self.assertIn(key, self.text(), key)
+
+    def test_the_nudge_keys_are_named(self):
+        self.assertIn(self.NUDGE, tui.footer_nav_text("gain"))
+
+    def test_the_action_line_fits_the_frame_at_78_columns(self):
+        # frame_w = min(FRAME_W, width - 1), so a 78-column terminal draws a
+        # 77-wide frame and the footer text has FRAME_W - 2 - FOOTER_TEXT_COL
+        # cells before the right border. Measured, not guessed.
+        self.assertLessEqual(len(tui.footer_action_line()),
+                             tui.FRAME_W - 2 - tui.FOOTER_TEXT_COL)
+
+    def test_the_nav_line_leaves_the_message_column_intact(self):
+        for focus in ("gain", "volume"):
+            self.assertLessEqual(
+                len(tui.footer_nav_text(focus)),
+                tui.FOOTER_MSG_COL - tui.FOOTER_TEXT_COL - 1, focus)
+
+    def test_the_focused_control_is_marked_in_the_nav_line(self):
+        marks = {focus: [kind for text, kind in tui.footer_nav(focus)
+                         if text in ("gain", "volume")]
+                 for focus in ("gain", "volume")}
+        self.assertEqual(marks["gain"], ["accent", "dim"])
+        self.assertEqual(marks["volume"], ["dim", "accent"])
+
+    def test_the_old_bindings_are_still_advertised(self):
+        # PRESERVE: the seven words the footer already showed keep working.
+        for binding in self.OLD_KEYS:
+            self.assertIn(binding, self.text(), binding)
+
 
 if __name__ == "__main__":
     unittest.main()

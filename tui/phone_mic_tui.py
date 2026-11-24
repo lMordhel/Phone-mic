@@ -56,6 +56,7 @@ FLOOR_DB = -60.0
 WAVE_CHARS = " ▁▂▃▄▅▆▇"
 
 UNKNOWN = "—"            # S2: an unreadable value is shown as a dash, not as 0
+MIC_MUTED = "MUTED"      # the one word for a muted source, decided by mic_state()
 
 NO_CAPTURE_TOOL = "NO CAPTURE TOOL"   # parec missing: nothing can be captured
 NO_SIGNAL = "NO SIGNAL"               # no window measured: nothing is captured
@@ -73,6 +74,11 @@ NO_BRIDGE_STREAM = "NO BRIDGE STREAM"
 FRAME_MIN_W = 62
 FRAME_W = 78
 FRAME_H = 27
+
+# Footer geometry: the text starts this far inside the left border, and a
+# transient message starts at FOOTER_MSG_COL so it never lands on a key name.
+FOOTER_TEXT_COL = 3
+FOOTER_MSG_COL = 45
 
 TL, TR, BL, BR = "╭", "╮", "╰", "╯"
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = "┌", "┐", "└", "┘"
@@ -499,10 +505,19 @@ def mic_state(audio: AudioState, muted: bool | None, alive: bool,
     if not audio.up:
         return MicState(audio.word, "bad", audio.cause, audio.fix)
     if muted:
-        return MicState("MUTED", "warn", "", "")
+        return MicState(MIC_MUTED, "warn", "", "")
     if alive:
         return MicState("ACTIVE", "ok", "", "")
     return MicState(fmt_value(unit_state).upper(), "bad", "", "")
+
+
+def bridge_alive(pids: list[int], unit_state: str | None) -> bool:
+    """Whether the bridge counts as up: scrcpy running and its unit active.
+
+    One decision for the panel and the snapshot (S6): the two used to repeat the
+    expression, so they could drift apart.
+    """
+    return bool(pids) and unit_state == "active"
 
 
 def audio_buffer_ms() -> str:
@@ -586,6 +601,15 @@ def mic_value_line(volume: int | None, stream_gain: int | None) -> str:
     """GAIN/VOLUME row for a state where neither can be read: dashes, not 0% (S2)."""
     return (f"GAIN    {fmt_value(volume, '3d', '%', 4)}"
             f"    VOLUME  {fmt_value(stream_gain, '3d', '%', 4)}")
+
+
+def mic_mute_note(mic: MicState) -> str:
+    """The trailing MUTED note `status` prints, taken from mic_state's word.
+
+    S6: the note used to be re-derived from the raw mute reading, so a stale
+    one could say MUTED while the panel's own decision said AUDIO SERVER DOWN.
+    """
+    return mic.word if mic.word == MIC_MUTED else ""
 
 
 class ControlResult(NamedTuple):
@@ -699,6 +723,16 @@ def sink_inputs() -> list[SinkInput] | None:
 def bridge_stream() -> SinkInput | None:
     """The scrcpy playback stream; None when there is none or it is unreadable."""
     return find_sink_input(sink_inputs())
+
+
+def routed_now() -> bool:
+    """Whether the bridge stream sits on the remap sink, read in one place.
+
+    Both renderers call this instead of repeating the two reads and the
+    comparison, so they cannot gather the routing facts differently (S6).
+    """
+    stream = bridge_stream()
+    return routing_ok(sink_index(), stream.sink if stream else "")
 
 
 def source_volume() -> int | None:
@@ -927,6 +961,52 @@ def truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
+def footer_action_line() -> str:
+    """First footer line: every action key the loop handles, in its old style.
+
+    P7: `[R]` was handled but never advertised. The line keeps the cells of the
+    original seven bindings; the keys that do not fit move to the second line
+    instead of being clipped by the frame edge.
+    """
+    return ("[C] Connect [X] Stop [M] Mute [A] Reroute "
+            "[T] Theme [D] Devices [Q] Quit")
+
+
+def footer_nav(focus: str) -> list[tuple[str, str]]:
+    """Second footer line as (text, tone) segments, with the focus marked.
+
+    P7: `[R]`, `[Tab]` and the nudge keys are handled but were never shown. The
+    line stops one cell before FOOTER_MSG_COL so a message never lands on it,
+    which is why the words "focus gain" gave way to the emphasis on the name.
+    `-`/`_` and `+`/`=` are the same ±5% nudge as the arrows, just as `c`/`C`
+    are the same key; naming them would take three cells the message column
+    needs, so the arrows are the ones advertised.
+    """
+    segments: list[tuple[str, str]] = [("[R] Reconnect [Tab] ", "dim")]
+    for index, name in enumerate(("gain", "volume")):
+        segments.append((name, "accent" if name == focus else "dim"))
+        if index == 0:
+            segments.append(("/", "dim"))
+    segments.append((" [←→] ±5%", "dim"))
+    return segments
+
+
+def footer_nav_text(focus: str) -> str:
+    """The second footer line as one string, for measuring and for tests."""
+    return "".join(text for text, _ in footer_nav(focus))
+
+
+def routing_claim(link: LinkState) -> tuple[str, str]:
+    """(text, tone) of the routing line, shared by the box and by `status`.
+
+    S6: the words `ok`, `WRONG` and the unknown dash used to be re-derived by
+    the snapshot, which could disagree with the box about them.
+    """
+    if link.routing is None:
+        return f"routing {UNKNOWN}", "dim"
+    return ("routing ok", "ok") if link.routing else ("routing WRONG", "bad")
+
+
 def link_rows(link: LinkState) -> list[tuple[str, str, str]]:
     """(label, value, tone) rows of the PHONE LINK box: seven rows, always.
 
@@ -948,11 +1028,8 @@ def link_rows(link: LinkState) -> list[tuple[str, str, str]]:
         service_tone = "plain" if link.service else "dim"
         rows.append(("service", fmt_value(link.service), service_tone))
         rows.append(("buffer", f"{audio_buffer_ms()} ms", "plain"))
-    if link.routing is None:
-        rows.append(("", f"routing {UNKNOWN}", "dim"))
-    else:
-        rows.append(("", "routing ok" if link.routing else "routing WRONG",
-                     "ok" if link.routing else "bad"))
+    routing, routing_tone = routing_claim(link)
+    rows.append(("", routing, routing_tone))
     return rows
 
 
@@ -1087,16 +1164,12 @@ def interactive() -> int:
             pids = bridge_pids()
             state = bridge_unit_state()
             model = adb_model()
-            want = sink_index() or ""
-            stream = bridge_stream()
-            have = stream.sink if stream else ""
-            routed = routing_ok(want, have)
+            routed = routed_now()
             volume = source_volume()
             muted = source_muted()
             stream_gain = stream_volume()
             # One decision from facts, shared with the `status` snapshot (S5).
             link = link_state(devices, model, state, audio, routed)
-            routing_dot = "ok" if routed else "WRONG"
 
             # --- two panels (rows 5..14) ----------------------------------
             panel_y = 5
@@ -1145,10 +1218,9 @@ def interactive() -> int:
             put(mic_y - 1, left_x, "VIRTUAL MICROPHONE", tone("label"))
             draw_box(stdscr, top + mic_y, left_x, 6, mic_w, color=tone("border"))
 
-            alive = bool(pids) and state == "active"
             # One decision from facts: a server that does not answer outranks the
             # word, the gain and the volume the box would otherwise print (S4).
-            mic = mic_state(audio, muted, alive, state)
+            mic = mic_state(audio, muted, bridge_alive(pids, state), state)
             put(mic_y + 1, left_x + 2, "●", tone(mic.tone))
             put(mic_y + 1, left_x + 4, "Phone-Mic", curses.A_BOLD)
             put(mic_y + 1, left_x + 15, "PipeWire remap source", tone("dim"))
@@ -1162,10 +1234,10 @@ def interactive() -> int:
                 put(mic_y + 4, left_x + 2, mic_value_line(volume, stream_gain),
                     tone("dim"))
             else:
+                routing, routing_tone = routing_claim(link)
                 put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
                     + (f" · pid {pids[0]}" if pids else "")
-                    + f" · routing {routing_dot}",
-                    tone("ok") if routed else tone("bad"))
+                    + f" · {routing}", tone(routing_tone))
 
                 def slider(row: int, label: str, value: int | None,
                            selected: bool) -> None:
@@ -1203,13 +1275,14 @@ def interactive() -> int:
 
             # --- footer (rows 23..26) -------------------------------------
             frame_row(frame_h - 4, TEE_L, TEE_R)
-            put(frame_h - 3, left + 3,
-                "[C] Connect [X] Stop [M] Mute [A] Reroute [T] Theme [D] Devices [Q] Quit",
+            put(frame_h - 3, left + FOOTER_TEXT_COL, footer_action_line(),
                 tone("dim"))
-            put(frame_h - 2, left + 3,
-                f"[Tab] gain/volume  [←→] ±5%   ·   focus {focus}", tone("dim"))
+            col = left + FOOTER_TEXT_COL
+            for text, kind in footer_nav(focus):
+                put(frame_h - 2, col, text, tone(kind))
+                col += len(text)
             if message and time.monotonic() - message_at < 6:
-                put(frame_h - 2, left + 3 + 42, message, tone("warn"))
+                put(frame_h - 2, left + FOOTER_MSG_COL, message, tone("warn"))
             frame_row(frame_h - 1, BL, BR)
 
             if picker:
@@ -1349,10 +1422,7 @@ def once() -> int:
     pids = bridge_pids()
     state = bridge_unit_state()
     model = adb_model()
-    want = sink_index() or ""
-    stream = bridge_stream()
-    have = stream.sink if stream else ""
-    routed = routing_ok(want, have)
+    routed = routed_now()
     volume = source_volume()
     stream_gain = stream_volume()
     muted = source_muted()
@@ -1388,12 +1458,10 @@ def once() -> int:
         + fmt_value(capture.level, "5.1f", " dB"))
     row("")
     row("  VIRTUAL MICROPHONE")
-    alive = bool(pids) and state == "active"
-    # The same decision the panel takes, from the same helper (S4, S7).
-    mic = mic_state(audio, muted, alive, state)
-    # No routing claim either while the server is silent: unknown is not WRONG.
-    claim = f"   routing {'ok' if routed else 'WRONG'}" if audio.up else ""
-    row(f"   ● Phone-Mic   {mic.word}{claim}")
+    # The same decisions the panel takes, from the same helpers (S4, S6, S7).
+    mic = mic_state(audio, muted, bridge_alive(pids, state), state)
+    claim, _ = routing_claim(link)
+    row(f"   ● Phone-Mic   {mic.word}   {claim}")
     if mic.cause:
         row(f"     {mic.cause}")
         row(f"     {mic.fix}")
@@ -1401,7 +1469,7 @@ def once() -> int:
         row(f"     service {fmt_value(state)}"
             + (f" · pid {pids[0]}" if pids else ""))
     row(f"   {mic_value_line(volume, stream_gain)}"
-        f"    {'MUTED' if muted else ''}")
+        f"    {mic_mute_note(mic)}")
     row("")
     row("  [C] Connect  [X] Stop  [M] Mute  [D] Devices  [Q] Quit")
     print(BL + H * (width - 2) + BR)
