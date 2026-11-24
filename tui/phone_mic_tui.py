@@ -23,18 +23,22 @@ import subprocess
 import sys
 import threading
 import time
+from typing import NamedTuple
 
 # realpath, not abspath: the command is installed as a wrapper in ~/.local/bin
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SINK = "phonemic_sink"
 SOURCE = "phone_mic"
 BRIDGE_UNIT = "phone-mic-bridge"
+ADB_READY = "device"    # the one adb device state that carries a usable transport
 
 SAMPLE_RATE = 8000      # metering rate: enough for level, cheap in CPU
 BAR_WINDOW_MS = 70      # one waveform slot
 WAVE_SLOTS = 28         # ~2 s of history
 FLOOR_DB = -60.0
 WAVE_CHARS = " ▁▂▃▄▅▆▇"
+
+UNKNOWN = "—"            # S2: an unreadable value is shown as a dash, not as 0
 
 FRAME_MIN_W = 62
 FRAME_W = 78
@@ -230,12 +234,33 @@ PALETTE = Palette()
 
 # --------------------------------------------------------------------------- state
 
-def run(cmd: list[str], timeout: float = 3.0) -> str:
+def query(cmd: list[str], timeout: float = 3.0) -> str | None:
+    """Run a read-only query and return its stdout, or None when unreadable.
+
+    None means "unknown": a missing binary, a timeout, an OSError, or a non-zero
+    exit that printed nothing. It is never conflated with a successful empty
+    answer, which stays "": a failed read must not look like a measurement (S2).
+
+    A non-zero exit that did print something is kept, not discarded:
+    `systemctl is-active` writes the unit state to stdout and exits non-zero for
+    anything but "active", so "inactive" or "failed" is a real answer.
+    """
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return out.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
+        return None
+    if out.returncode != 0 and not out.stdout.strip():
+        return None
+    return out.stdout
+
+
+def run(cmd: list[str], timeout: float = 3.0) -> str:
+    """Fire-and-forget command: "" whatever happens; setters only.
+
+    Its callers ignore the output (`pactl set-*`, `move-sink-input`) or just list
+    what exists. A read that feeds a displayed value must use query().
+    """
+    return query(cmd, timeout) or ""
 
 
 class Cache:
@@ -260,19 +285,132 @@ class Cache:
 CACHE = Cache()
 
 
-def adb_devices() -> list[str]:
-    lines = run(["adb", "devices"]).splitlines()[1:]
-    return [line.split()[0] for line in lines if line.strip().endswith("device")]
+def fmt_value(value, spec: str = "", suffix: str = "", width: int = 0) -> str:
+    """Format a value that may be unknown: unknown is `—`, never a number (S2).
+
+    `width` keeps a column stable: the dash is padded to the width the numeric
+    form would have taken.
+    """
+    if value is None:
+        return UNKNOWN.ljust(width)
+    return format(value, spec) + suffix
 
 
-def adb_model() -> str:
-    def read() -> str:
+def parse_volume_percent(text: str | None) -> int | None:
+    """Aggregate percentage from `pactl get-*-volume`; None when unreadable."""
+    if text is None:
+        return None
+    for line in text.splitlines():
+        if "%" not in line:
+            continue
+        for part in line.split("/"):
+            part = part.strip()
+            if part.endswith("%"):
+                digits = "".join(c for c in part if c.isdigit())
+                if digits:
+                    return int(digits)
+    return None
+
+
+def parse_mute(text: str | None) -> bool | None:
+    """`Mute: yes|no`; None when the answer is neither."""
+    if text is None:
+        return None
+    words = text.strip().lower().replace(":", " ").split()
+    if "yes" in words:
+        return True
+    if "no" in words:
+        return False
+    return None
+
+
+def parse_unit_state(text: str | None) -> str | None:
+    """Unit state from `systemctl is-active`: active, inactive, failed, …"""
+    if text is None:
+        return None
+    words = text.split()
+    return words[0] if words else None
+
+
+def parse_adb_device_states(text: str | None) -> list[tuple[str, str]] | None:
+    """(serial, state) pairs from `adb devices`: device, unauthorized, offline, …"""
+    if text is None:
+        return None
+    devices: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0].startswith("*") or line.startswith("List of"):
+            continue
+        devices.append((fields[0], fields[1]))
+    return devices
+
+
+def parse_model_props(text: str | None) -> str | None:
+    """One `getprop` answer; None when the property is unset or unreadable."""
+    if text is None:
+        return None
+    return text.strip() or None
+
+
+class SinkInput(NamedTuple):
+    index: str
+    sink: str
+    volume: int | None
+    app: str | None
+
+
+def parse_sink_inputs(text: str | None) -> list[SinkInput] | None:
+    """Blocks of `pactl list sink-inputs`; None when the listing is unreadable."""
+    if text is None:
+        return None
+    entries: list[SinkInput] = []
+    index: str | None = None
+    sink = ""
+    app: str | None = None
+    volume: int | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Sink Input #"):
+            if index is not None:
+                entries.append(SinkInput(index, sink, volume, app))
+            index = stripped.split("#", 1)[1].strip()
+            sink, app, volume = "", None, None
+        elif index is None:
+            continue
+        elif stripped.startswith("Sink:"):
+            sink = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Volume:") and volume is None:
+            volume = parse_volume_percent(stripped)
+        elif stripped.startswith("application.name = "):
+            app = stripped.split("=", 1)[1].strip().strip('"')
+    if index is not None:
+        entries.append(SinkInput(index, sink, volume, app))
+    return entries
+
+
+def find_sink_input(inputs: list[SinkInput] | None,
+                    app: str = "scrcpy") -> SinkInput | None:
+    """The first sink-input owned by `app`; None when the listing has none."""
+    for entry in inputs or ():
+        if entry.app == app:
+            return entry
+    return None
+
+
+def adb_devices() -> list[tuple[str, str]] | None:
+    """(serial, state) of every attached device; None when adb cannot answer."""
+    return CACHE.get("devices", 2.0,
+                     lambda: parse_adb_device_states(query(["adb", "devices"])))
+
+
+def adb_model() -> str | None:
+    def read() -> str | None:
         for prop in ("ro.product.marketname", "ro.product.odm.marketname",
                      "ro.product.model"):
-            value = run(["adb", "shell", "getprop", prop]).strip()
+            value = parse_model_props(query(["adb", "shell", "getprop", prop]))
             if value:
                 return value
-        return "-"
+        return None
     return CACHE.get("model", 30.0, read)
 
 
@@ -281,82 +419,60 @@ def bridge_pids() -> list[int]:
     return [int(p) for p in out.split() if p.isdigit()]
 
 
-def bridge_unit_state() -> str:
-    return run(["systemctl", "--user", "is-active", BRIDGE_UNIT]).strip() or "unknown"
+def bridge_unit_state() -> str | None:
+    return parse_unit_state(
+        query(["systemctl", "--user", "is-active", BRIDGE_UNIT]))
 
 
-def sink_index() -> str:
-    for line in run(["pactl", "list", "short", "sinks"]).splitlines():
+def sink_index() -> str | None:
+    """Index of the remap sink: "" when absent, None when pactl failed."""
+    text = query(["pactl", "list", "short", "sinks"])
+    if text is None:
+        return None
+    for line in text.splitlines():
         fields = line.split()
         if len(fields) > 1 and fields[1] == SINK:
             return fields[0]
     return ""
 
 
-def source_present() -> bool:
-    for line in run(["pactl", "list", "short", "sources"]).splitlines():
+def source_present() -> bool | None:
+    text = query(["pactl", "list", "short", "sources"])
+    if text is None:
+        return None
+    for line in text.splitlines():
         fields = line.split()
         if len(fields) > 1 and fields[1] == SOURCE:
             return True
     return False
 
 
-def bridge_stream() -> tuple[str, str]:
-    """(sink-input index, sink index) of the scrcpy playback stream."""
-    out = run(["pactl", "list", "sink-inputs"])
-    idx = ""
-    current = ""
-    for line in out.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Sink Input #"):
-            idx = stripped.split("#", 1)[1]
-        elif stripped.startswith("Sink:") and idx:
-            current = stripped.split(":", 1)[1].strip()
-        elif 'application.name = "scrcpy"' in stripped:
-            return idx, current
-    return "", ""
+def sink_inputs() -> list[SinkInput] | None:
+    return CACHE.get("sinputs", 1.0, lambda: parse_sink_inputs(
+        query(["pactl", "list", "sink-inputs"])))
 
 
-def percent(text: str) -> int:
-    """Extract the aggregate percentage from `pactl get-*-volume` output."""
-    for line in text.splitlines():
-        if "%" in line:
-            chunk = line.split("/")
-            for part in chunk:
-                part = part.strip()
-                if part.endswith("%"):
-                    digits = "".join(c for c in part if c.isdigit())
-                    if digits:
-                        return int(digits)
-    return 0
+def bridge_stream() -> SinkInput | None:
+    """The scrcpy playback stream; None when there is none or it is unreadable."""
+    return find_sink_input(sink_inputs())
 
 
-def source_volume() -> int:
-    return CACHE.get("vol", 1.0, lambda: percent(
-        run(["pactl", "get-source-volume", SOURCE])))
+def source_volume() -> int | None:
+    return CACHE.get("vol", 1.0, lambda: parse_volume_percent(
+        query(["pactl", "get-source-volume", SOURCE])))
 
 
-def source_muted() -> bool:
-    return CACHE.get("mute", 1.0, lambda: "yes" in run(
-        ["pactl", "get-source-mute", SOURCE]).lower())
+def source_muted() -> bool | None:
+    return CACHE.get("mute", 1.0, lambda: parse_mute(
+        query(["pactl", "get-source-mute", SOURCE])))
 
 
-def stream_volume() -> int:
+def stream_volume() -> int | None:
     # `pactl get-sink-input-volume` does not exist in every pactl release
     # ("No valid command specified"), so the volume is read from the listing.
-    def read() -> int:
-        idx, _ = bridge_stream()
-        if not idx:
-            return 0
-        block = run(["pactl", "list", "sink-inputs"])
-        current = ""
-        for line in block.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("Sink Input #"):
-                current = stripped.split("#", 1)[1]
-            elif current == idx and stripped.startswith("Volume:"):
-                return percent(stripped)
-        return 0
+    def read() -> int | None:
+        stream = bridge_stream()
+        return stream.volume if stream else None
     return CACHE.get("svol", 1.0, read)
 
 
@@ -366,11 +482,12 @@ def set_source_volume(value: int) -> None:
 
 
 def set_stream_volume(value: int) -> None:
-    idx, _ = bridge_stream()
-    if idx:
-        run(["pactl", "set-sink-input-volume", idx,
+    stream = bridge_stream()
+    if stream:
+        run(["pactl", "set-sink-input-volume", stream.index,
              f"{max(0, min(100, value))}%"])
     CACHE.invalidate("svol")
+    CACHE.invalidate("sinputs")
 
 
 def toggle_mute() -> tuple[bool, str]:
@@ -406,7 +523,8 @@ def reconnect_phone() -> tuple[bool, str]:
 
 def fix_routing() -> tuple[bool, str]:
     want = sink_index()
-    have = bridge_stream()[1]
+    stream = bridge_stream()
+    have = stream.sink if stream else ""
     if not want:
         return False, f"{SINK} missing"
     if not have:
@@ -481,8 +599,8 @@ class LevelMeter(threading.Thread):
 
 # ------------------------------------------------------------------------- drawing
 
-def db_fraction(db: float) -> float:
-    if db <= FLOOR_DB:
+def db_fraction(db: float | None) -> float:
+    if db is None or db <= FLOOR_DB:
         return 0.0
     return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
 
@@ -506,15 +624,17 @@ def truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
-def connection_lines(devices: list[str]) -> list[tuple[str, str, str]]:
+def connection_lines(devices: list[tuple[str, str]] | None
+                     ) -> list[tuple[str, str, str]]:
     """(label, value, tone) rows for the CONNECTION panel."""
     rows: list[tuple[str, str, str]] = []
-    if devices:
-        peer = devices[0]
+    attached = [serial for serial, state in devices or () if state == ADB_READY]
+    if attached:
+        peer = attached[0]
         kind = "Wi-Fi" if ":" in peer else "USB"
         host = peer.split(":")[0]
         rows.append(("state", "CONNECTED", "ok"))
-        rows.append(("device", truncate(adb_model(), 20), "plain"))
+        rows.append(("device", truncate(fmt_value(adb_model()), 20), "plain"))
         rows.append(("transport", kind, "plain"))
         rows.append(("address", host, "plain"))
     else:
@@ -652,15 +772,19 @@ def interactive() -> int:
                 edge(row, left + frame_w - 1)
 
             # --- data -----------------------------------------------------
-            devices = CACHE.get("devices", 2.0, adb_devices)
+            devices = adb_devices()
             pids = bridge_pids()
             state = bridge_unit_state()
-            want = sink_index()
-            have = bridge_stream()[1]
+            want = sink_index() or ""
+            stream = bridge_stream()
+            have = stream.sink if stream else ""
             volume = source_volume()
             muted = source_muted()
             stream_gain = stream_volume()
             buffer_ms = os.environ.get("AUDIO_BUFFER", "50")
+            # An unknown index (None -> "") can never match: it must not read as ok.
+            routing_ok = bool(have) and bool(want) and have == want
+            routing_dot = "ok" if routing_ok else "WRONG"
 
             # --- two panels (rows 5..14) ----------------------------------
             panel_y = 5
@@ -678,9 +802,8 @@ def interactive() -> int:
                 else:
                     put(row, left_x + 2, f"{label:<10}", tone("dim"))
                     put(row, left_x + 13, value, tone("plain"))
-            routing_dot = "ok" if have == want else "WRONG"
             put(panel_y + panel_h - 2, left_x + 2, f"routing {routing_dot}",
-                tone("ok") if routing_dot == "ok" else tone("bad"))
+                tone("ok") if routing_ok else tone("bad"))
 
             wave_w = max(8, col_w - 6)
             slots = meter.snapshot()
@@ -689,8 +812,10 @@ def interactive() -> int:
             put(panel_y + 4, right_x + 2, "INPUT LEVEL", tone("dim"))
             bar_w = max(6, wave_w - 11)
             put(panel_y + 5, right_x + 2, level_bar(peak, bar_w), level_tone(peak))
-            put(panel_y + 5, right_x + 2 + bar_w + 1, f"{peak:5.1f} dB", tone("plain"))
-            put(panel_y + 6, right_x + 2, f"RMS {meter.rms_db:5.1f} dB   "
+            put(panel_y + 5, right_x + 2 + bar_w + 1,
+                fmt_value(peak, "5.1f", " dB", 8), tone("plain"))
+            put(panel_y + 6, right_x + 2,
+                f"RMS {fmt_value(meter.rms_db, '5.1f', ' dB', 8)}   "
                 f"buffer {buffer_ms} ms", tone("dim"))
 
             # --- virtual microphone (rows 16..21) -------------------------
@@ -705,27 +830,42 @@ def interactive() -> int:
             elif alive:
                 status, dot = "ACTIVE", "ok"
             else:
-                status, dot = state.upper(), "bad"
+                status, dot = fmt_value(state).upper(), "bad"
             put(mic_y + 1, left_x + 2, "●", tone(dot))
             put(mic_y + 1, left_x + 4, "Phone-Mic", curses.A_BOLD)
             put(mic_y + 1, left_x + 15, "PipeWire remap source", tone("dim"))
             put(mic_y + 1, left_x + mic_w - 3 - len(status), status,
                 tone(dot) | curses.A_BOLD)
-            put(mic_y + 2, left_x + 2, f"service {state}"
+            put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
                 + (f" · pid {pids[0]}" if pids else "") + f" · routing {routing_dot}",
-                tone("ok") if routing_dot == "ok" else tone("bad"))
+                tone("ok") if routing_ok else tone("bad"))
 
-            def slider(row: int, label: str, value: int, selected: bool) -> None:
+            def slider(row: int, label: str, value: int | None, selected: bool) -> None:
                 track_w = 16
-                filled = int(round(track_w * value / 100))
-                track = "━" * filled + "●" + "━" * (track_w - filled)
+                if value is None:
+                    # No readable volume: leave the track blank rather than flag
+                    # a position nobody measured, and print a dash, not 0% (S2).
+                    track = " " * track_w
+                else:
+                    filled = int(round(track_w * value / 100))
+                    track = "━" * filled + "●" + "━" * (track_w - filled)
                 put(row, left_x + 2, f"{label:<8}",
                     tone("accent") if selected else tone("dim"))
                 put(row, left_x + 11, track, tone("ok") if selected else tone("dim"))
-                put(row, left_x + 29, f"{value:3d}%", tone("plain"))
+                put(row, left_x + 29, fmt_value(value, "3d", "%", 4), tone("plain"))
 
             slider(mic_y + 3, "GAIN", volume, focus == "gain")
             slider(mic_y + 4, "VOLUME", stream_gain, focus == "volume")
+
+            def nudge(delta: int) -> None:
+                """Step the focused control; unknown volume refuses instead of guessing."""
+                value = volume if focus == "gain" else stream_gain
+                if value is None:
+                    return
+                if focus == "gain":
+                    set_source_volume(value + delta)
+                else:
+                    set_stream_volume(value + delta)
 
             # --- footer (rows 23..26) -------------------------------------
             frame_row(frame_h - 4, TEE_L, TEE_R)
@@ -845,9 +985,9 @@ def interactive() -> int:
             elif ch == 9:
                 focus = "volume" if focus == "gain" else "gain"
             elif ch in (curses.KEY_LEFT, ord("-"), ord("_")):
-                set_source_volume(volume - 5) if focus == "gain" else set_stream_volume(stream_gain - 5)
+                nudge(-5)
             elif ch in (curses.KEY_RIGHT, ord("+"), ord("=")):
-                set_source_volume(volume + 5) if focus == "gain" else set_stream_volume(stream_gain + 5)
+                nudge(+5)
 
     try:
         curses.wrapper(draw)
@@ -866,8 +1006,12 @@ def once() -> int:
     devices = adb_devices()
     pids = bridge_pids()
     state = bridge_unit_state()
-    want = sink_index()
-    have = bridge_stream()[1]
+    want = sink_index() or ""
+    stream = bridge_stream()
+    have = stream.sink if stream else ""
+    volume = source_volume()
+    stream_gain = stream_volume()
+    muted = source_muted()
     slots = meter.snapshot()
     peak = meter.peak_db
     meter.stop()
@@ -887,15 +1031,17 @@ def once() -> int:
     row("")
     row("  INPUT MONITOR")
     row("   " + wave_line(slots, width - 6))
-    row("   " + level_bar(peak, 20) + f" {peak:5.1f} dB")
+    row("   " + level_bar(peak, 20) + " " + fmt_value(peak, "5.1f", " dB"))
     row("")
     row("  VIRTUAL MICROPHONE")
     alive = bool(pids) and state == "active"
-    routing = "ok" if have == want else "WRONG"
-    row(f"   ● Phone-Mic   {'ACTIVE' if alive else state.upper()}   routing {routing}")
-    row(f"     service {state}" + (f" · pid {pids[0]}" if pids else ""))
-    row(f"   GAIN    {source_volume():3d}%    VOLUME  {stream_volume():3d}%"
-        f"    {'MUTED' if source_muted() else ''}")
+    routing = "ok" if bool(have) and bool(want) and have == want else "WRONG"
+    row(f"   ● Phone-Mic   {'ACTIVE' if alive else fmt_value(state).upper()}"
+        f"   routing {routing}")
+    row(f"     service {fmt_value(state)}" + (f" · pid {pids[0]}" if pids else ""))
+    row(f"   GAIN    {fmt_value(volume, '3d', '%', 4)}"
+        f"    VOLUME  {fmt_value(stream_gain, '3d', '%', 4)}"
+        f"    {'MUTED' if muted else ''}")
     row("")
     row("  [C] Connect  [X] Stop  [M] Mute  [D] Devices  [Q] Quit")
     print(BL + H * (width - 2) + BR)
