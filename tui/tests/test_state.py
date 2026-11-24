@@ -12,12 +12,24 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import phone_mic_tui as tui  # noqa: E402  (sys.path is prepared above)
 
+
+# `pactl info` while the server answers; it names itself on the Server Name line.
+PACTL_INFO = (
+    "Server String: /run/user/1000/pulse/native\n"
+    "Library Protocol Version: 35\n"
+    "Server Name: PulseAudio (on PipeWire 1.6.11)\n"
+    "Server Version: 15.0.0\n"
+)
+
+# What pactl prints when pipewire-pulse is not there to answer.
+PACTL_INFO_DOWN = "Connection failure: Connection refused\n"
 
 # pactl prints one line with every channel and one balance line after it.
 PACTL_VOLUME = (
@@ -344,6 +356,241 @@ class UnknownFormatTest(unittest.TestCase):
     def test_known_value_keeps_its_number(self):
         self.assertEqual(tui.fmt_value(40, "3d", "%", 4), " 40%")
         self.assertEqual(tui.fmt_value(-60.0, "5.1f", " dB", 8), "-60.0 dB")
+
+
+class AudioServerStateTest(unittest.TestCase):
+    """S4: a dead audio server is its own state, with a cause and a fix."""
+
+    def test_an_answer_means_the_server_is_up(self):
+        state = tui.audio_state(PACTL_INFO)
+        self.assertTrue(state.up)
+        self.assertEqual((state.word, state.cause, state.fix), ("", "", ""))
+
+    def test_no_answer_is_its_own_state(self):
+        state = tui.audio_state(None)
+        self.assertFalse(state.up)
+        self.assertEqual(state.word, "AUDIO SERVER DOWN")
+
+    def test_the_down_state_names_the_cause(self):
+        self.assertIn("pipewire-pulse", tui.audio_state(None).cause)
+
+    def test_the_down_state_prints_the_fixing_command(self):
+        # S4: the box says what to run, in the owner's shape ("Arreglo: ...").
+        fix = tui.audio_state(None).fix
+        self.assertTrue(fix.startswith("Arreglo: "), fix)
+        self.assertIn("systemctl --user restart pipewire-pulse", fix)
+
+    def test_a_failure_message_is_not_an_answer(self):
+        self.assertFalse(tui.audio_state(PACTL_INFO_DOWN).up)
+        self.assertFalse(tui.audio_state("").up)
+
+
+class AudioProbeTest(unittest.TestCase):
+    """One cheap probe per refresh, and the server coming back is noticed."""
+
+    def setUp(self):
+        self._query = tui.query
+        self._ttl = tui.AUDIO_TTL
+        tui.CACHE.invalidate("audio")
+        tui.AUDIO_TTL = 0.01
+
+    def tearDown(self):
+        tui.query = self._query
+        tui.AUDIO_TTL = self._ttl
+        tui.CACHE.invalidate("audio")
+
+    def test_the_probe_is_cached_between_frames(self):
+        calls: list[list[str]] = []
+        tui.query = lambda cmd, **kw: calls.append(cmd) or PACTL_INFO
+        for _ in range(3):
+            tui.audio_probe()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:2], ["pactl", "info"])
+
+    def test_the_server_coming_back_is_noticed_without_a_restart(self):
+        answers = [None]
+        tui.query = lambda cmd, **kw: answers[0]
+        self.assertFalse(tui.audio_state(tui.audio_probe()).up)
+        answers[0] = PACTL_INFO
+        time.sleep(0.05)
+        self.assertTrue(tui.audio_state(tui.audio_probe()).up)
+
+    def test_a_dead_server_is_reported_again_after_the_answer_expires(self):
+        answers = [PACTL_INFO]
+        tui.query = lambda cmd, **kw: answers[0]
+        self.assertTrue(tui.audio_state(tui.audio_probe()).up)
+        answers[0] = None
+        time.sleep(0.05)
+        self.assertFalse(tui.audio_state(tui.audio_probe()).up)
+
+
+class MicStateTest(unittest.TestCase):
+    """S4/S8: what the VIRTUAL MICROPHONE box may claim."""
+
+    def test_a_dead_audio_server_makes_the_box_say_so(self):
+        state = tui.mic_state(tui.audio_state(None), None, True, "active")
+        self.assertEqual(state.word, "AUDIO SERVER DOWN")
+        self.assertNotEqual(state.word, "ACTIVE")
+        self.assertEqual(state.tone, "bad")
+        self.assertTrue(state.cause)
+        self.assertTrue(state.fix)
+
+    def test_a_dead_audio_server_wins_over_a_healthy_unit(self):
+        # The bridge can look fine while pactl cannot ask the server anything.
+        state = tui.mic_state(tui.audio_state(None), False, True, "active")
+        self.assertEqual(state.word, "AUDIO SERVER DOWN")
+
+    def test_a_live_server_keeps_the_old_state_words(self):
+        # PRESERVE: ACTIVE / MUTED / the unit state read exactly as before (S8).
+        up = tui.audio_state(PACTL_INFO)
+        self.assertEqual(tui.mic_state(up, False, True, "active").word, "ACTIVE")
+        self.assertEqual(tui.mic_state(up, True, True, "active").word, "MUTED")
+        self.assertEqual(tui.mic_state(up, False, False, "inactive").word,
+                         "INACTIVE")
+        self.assertEqual(tui.mic_state(up, False, False, None).word, "—")
+
+    def test_a_live_server_shows_the_service_line_not_a_cause(self):
+        state = tui.mic_state(tui.audio_state(PACTL_INFO), False, True, "active")
+        self.assertEqual((state.cause, state.fix), ("", ""))
+
+
+class MicValueLineTest(unittest.TestCase):
+    """S2: with the server down the gains are dashes, never 0%."""
+
+    def test_unknown_values_are_dashes_not_zero_percent(self):
+        line = tui.mic_value_line(None, None)
+        self.assertNotIn("0%", line)
+        self.assertIn("GAIN", line)
+        self.assertIn("VOLUME", line)
+        self.assertEqual(line.count(tui.UNKNOWN), 2)
+
+    def test_known_values_keep_their_numbers(self):
+        line = tui.mic_value_line(40, 100)
+        self.assertIn(" 40%", line)
+        self.assertIn("100%", line)
+
+
+class ControlOutcomeTest(unittest.TestCase):
+    """S7: a control that failed never reports success."""
+
+    def test_a_working_write_keeps_the_success_wording(self):
+        self.assertEqual(tui.control_outcome(True, True, "MUTED"),
+                         tui.ControlResult(True, "MUTED"))
+        self.assertEqual(tui.control_outcome(True, True, "unmuted").message,
+                         "unmuted")
+
+    def test_a_failed_write_reports_the_failure_not_the_success(self):
+        result = tui.control_outcome(True, False, "MUTED")
+        self.assertFalse(result.ok)
+        self.assertNotIn("MUTED", result.message)
+        self.assertIn("pactl failed", result.message)
+
+    def test_the_failure_keeps_pactls_own_words(self):
+        result = tui.control_outcome(True, False, "MUTED",
+                                     "Connection failure: Connection refused")
+        self.assertIn("Connection refused", result.message)
+
+    def test_an_unreadable_value_is_refused_before_any_write(self):
+        result = tui.control_outcome(False, False, "MUTED")
+        self.assertFalse(result.ok)
+        self.assertNotIn("MUTED", result.message)
+        self.assertIn("no current value", result.message)
+
+    def test_what_is_missing_can_be_named_by_the_caller(self):
+        result = tui.control_outcome(False, False, "", "", "NO BRIDGE STREAM")
+        self.assertEqual(result.message, "NO BRIDGE STREAM")
+
+
+class MuteControlTest(unittest.TestCase):
+    """S7: the mute toggle never writes a guess and never fakes success."""
+
+    def setUp(self):
+        self._query = tui.query
+        self._write = tui.write_cmd
+        tui.CACHE.invalidate("mute")
+
+    def tearDown(self):
+        tui.query = self._query
+        tui.write_cmd = self._write
+        tui.CACHE.invalidate("mute")
+
+    def test_a_failed_write_is_reported(self):
+        tui.query = lambda *a, **k: "Mute: no\n"
+        tui.write_cmd = lambda cmd, **k: (False,
+                                          "Connection failure: Connection refused")
+        result = tui.toggle_mute()
+        self.assertFalse(result.ok)
+        self.assertIn("Connection refused", result.message)
+        self.assertNotIn("MUTED", result.message)
+
+    def test_an_unknown_mute_refuses_to_write_a_guess(self):
+        tui.query = lambda *a, **k: None
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("mute was written without a reading")
+
+        tui.write_cmd = refuse
+        result = tui.toggle_mute()
+        self.assertFalse(result.ok)
+        self.assertNotEqual(result.message, "MUTED")
+
+    def test_a_working_write_keeps_the_old_wording(self):
+        tui.query = lambda *a, **k: "Mute: no\n"
+        tui.write_cmd = lambda cmd, **k: (True, "")
+        self.assertEqual(tui.toggle_mute().message, "MUTED")
+        tui.CACHE.invalidate("mute")
+        tui.query = lambda *a, **k: "Mute: yes\n"
+        self.assertEqual(tui.toggle_mute().message, "unmuted")
+
+    def test_the_write_targets_the_phone_mic_source(self):
+        calls: list[list[str]] = []
+        tui.query = lambda *a, **k: "Mute: no\n"
+        tui.write_cmd = lambda cmd, **k: (calls.append(cmd) or (True, ""))
+        tui.toggle_mute()
+        self.assertEqual(calls[0][1:], ["set-source-mute", tui.SOURCE, "yes"])
+
+
+class VolumeControlTest(unittest.TestCase):
+    """S7: the sliders report a failed write and never invent one."""
+
+    def setUp(self):
+        self._query = tui.query
+        self._write = tui.write_cmd
+        for key in ("vol", "svol", "sinputs"):
+            tui.CACHE.invalidate(key)
+
+    def tearDown(self):
+        tui.query = self._query
+        tui.write_cmd = self._write
+        for key in ("vol", "svol", "sinputs"):
+            tui.CACHE.invalidate(key)
+
+    def test_a_failed_gain_write_is_reported(self):
+        tui.write_cmd = lambda cmd, **k: (False, "Connection refused")
+        result = tui.set_source_volume(55)
+        self.assertFalse(result.ok)
+        self.assertIn("Connection refused", result.message)
+
+    def test_a_working_gain_write_reports_success_and_clamps(self):
+        calls: list[list[str]] = []
+        tui.write_cmd = lambda cmd, **k: (calls.append(cmd) or (True, ""))
+        self.assertTrue(tui.set_source_volume(140).ok)
+        self.assertEqual(calls[0][-1], "100%")
+
+    def test_a_failed_volume_write_is_reported(self):
+        tui.query = lambda *a, **k: SINK_INPUTS_WITH_SCRCPY
+        tui.write_cmd = lambda cmd, **k: (False, "No such entity")
+        result = tui.set_stream_volume(70)
+        self.assertFalse(result.ok)
+        self.assertIn("No such entity", result.message)
+
+    def test_without_a_stream_nothing_is_written_and_nothing_is_claimed(self):
+        tui.query = lambda *a, **k: SINK_INPUTS_NO_SCRCPY
+        written: list[list[str]] = []
+        tui.write_cmd = lambda cmd, **k: (written.append(cmd) or (True, ""))
+        result = tui.set_stream_volume(70)
+        self.assertFalse(result.ok)
+        self.assertEqual(written, [])
 
 
 if __name__ == "__main__":

@@ -43,6 +43,16 @@ UNKNOWN = "—"            # S2: an unreadable value is shown as a dash, not as 
 NO_CAPTURE_TOOL = "NO CAPTURE TOOL"   # parec missing: nothing can be captured
 NO_SIGNAL = "NO SIGNAL"               # no window measured: nothing is captured
 
+# S4: the audio server did not answer, so nothing about the pipeline is known.
+AUDIO_SERVER_DOWN = "AUDIO SERVER DOWN"
+AUDIO_CAUSE = "pipewire-pulse no responde."
+AUDIO_FIX = "Arreglo: systemctl --user restart pipewire-pulse"
+AUDIO_TTL = 2.0         # one `pactl info` answer is reused for about a second
+
+# S7: a control with no reading to start from, and a stream that is not there.
+UNREADABLE_CONTROL = "no current value to change"
+NO_BRIDGE_STREAM = "NO BRIDGE STREAM"
+
 FRAME_MIN_W = 62
 FRAME_W = 78
 FRAME_H = 27
@@ -400,6 +410,115 @@ def find_sink_input(inputs: list[SinkInput] | None,
     return None
 
 
+class AudioState(NamedTuple):
+    """What the panel may say about the audio server (S4).
+
+    `up` is the licence to print any reading at all: while it is false the box
+    claims no state word, no gain and no volume, because none was measured.
+    """
+    up: bool
+    word: str
+    cause: str
+    fix: str
+
+
+def audio_state(info: str | None) -> AudioState:
+    """Decide the audio server state from the probe answer only.
+
+    An answer must name a server: `pactl info` prints "Server Name" when the
+    server replies, and only a failure line when it does not. No answer, an
+    empty answer, or a failure message all mean the same thing: unknown, which
+    gets its own words and the command that fixes it (S4).
+    """
+    if info is None or "server name" not in info.lower():
+        return AudioState(False, AUDIO_SERVER_DOWN, AUDIO_CAUSE, AUDIO_FIX)
+    return AudioState(True, "", "", "")
+
+
+class MicState(NamedTuple):
+    """What the VIRTUAL MICROPHONE box may say: a word, a tone, and the fix."""
+    word: str
+    tone: str
+    cause: str
+    fix: str
+
+
+def mic_state(audio: AudioState, muted: bool | None, alive: bool,
+              unit_state: str | None) -> MicState:
+    """What the VIRTUAL MICROPHONE box may claim, from facts only (S4, S8).
+
+    A server that does not answer outranks everything else: the bridge unit can
+    look active while nothing can be read or written, and the box must not paint
+    `ACTIVE`, a gain or a volume in that state (S2, S4).
+    """
+    if not audio.up:
+        return MicState(audio.word, "bad", audio.cause, audio.fix)
+    if muted:
+        return MicState("MUTED", "warn", "", "")
+    if alive:
+        return MicState("ACTIVE", "ok", "", "")
+    return MicState(fmt_value(unit_state).upper(), "bad", "", "")
+
+
+def mic_value_line(volume: int | None, stream_gain: int | None) -> str:
+    """GAIN/VOLUME row for a state where neither can be read: dashes, not 0% (S2)."""
+    return (f"GAIN    {fmt_value(volume, '3d', '%', 4)}"
+            f"    VOLUME  {fmt_value(stream_gain, '3d', '%', 4)}")
+
+
+class ControlResult(NamedTuple):
+    """Whether a control worked, and the one line the panel shows for it."""
+    ok: bool
+    message: str
+
+
+def control_outcome(readable: bool, write_ok: bool, success: str,
+                    detail: str = "",
+                    blocked: str = UNREADABLE_CONTROL) -> ControlResult:
+    """Decide whether a control may report success (S7).
+
+    Three outcomes, never merged: the current value could not be read, so no
+    write was attempted and the control says it cannot; the write itself failed,
+    so the panel reports that failure in pactl's own words; or the write worked
+    and the control keeps the wording it always had.
+    """
+    if not readable:
+        return ControlResult(False, blocked)
+    if not write_ok:
+        return ControlResult(False, f"pactl failed: {detail}" if detail
+                             else "pactl failed")
+    return ControlResult(True, success)
+
+
+def write_cmd(cmd: list[str], timeout: float = 3.0) -> tuple[bool, str]:
+    """Run a setter and report what happened: (worked, pactl's own words).
+
+    `run()` cannot serve here: it discards the exit status, so a refused write
+    would look like a success. This runner decides nothing; control_outcome()
+    owns that. A write is also evidence about the server, so the probe answer is
+    dropped and the next frame asks again.
+    """
+    CACHE.invalidate("audio")
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return False, str(exc)
+    if out.returncode == 0:
+        return True, ""
+    detail = (out.stderr or out.stdout).strip().splitlines()
+    return False, detail[-1] if detail else f"exit {out.returncode}"
+
+
+def audio_probe() -> str | None:
+    """One `pactl info` per refresh; None when the server does not answer.
+
+    Cached for AUDIO_TTL so the 120 ms frame loop does not fork pactl the whole
+    time, and short enough that a server that comes back is noticed without
+    restarting the panel (S4).
+    """
+    return CACHE.get("audio", AUDIO_TTL, lambda: query(["pactl", "info"]))
+
+
 def adb_devices() -> list[tuple[str, str]] | None:
     """(serial, state) of every attached device; None when adb cannot answer."""
     return CACHE.get("devices", 2.0,
@@ -479,25 +598,38 @@ def stream_volume() -> int | None:
     return CACHE.get("svol", 1.0, read)
 
 
-def set_source_volume(value: int) -> None:
-    run(["pactl", "set-source-volume", SOURCE, f"{max(0, min(100, value))}%"])
+def set_source_volume(value: int) -> ControlResult:
+    target = max(0, min(100, value))
+    work_ok, detail = write_cmd(["pactl", "set-source-volume", SOURCE,
+                                 f"{target}%"])
     CACHE.invalidate("vol")
+    return control_outcome(True, work_ok, f"gain {target}%", detail)
 
 
-def set_stream_volume(value: int) -> None:
+def set_stream_volume(value: int) -> ControlResult:
     stream = bridge_stream()
-    if stream:
-        run(["pactl", "set-sink-input-volume", stream.index,
-             f"{max(0, min(100, value))}%"])
     CACHE.invalidate("svol")
     CACHE.invalidate("sinputs")
+    if not stream:
+        # There is nothing to write to: say what is missing, never a success.
+        return control_outcome(False, False, "", "", NO_BRIDGE_STREAM)
+    target = max(0, min(100, value))
+    work_ok, detail = write_cmd(["pactl", "set-sink-input-volume", stream.index,
+                                 f"{target}%"])
+    return control_outcome(True, work_ok, f"volume {target}%", detail)
 
 
-def toggle_mute() -> tuple[bool, str]:
+def toggle_mute() -> ControlResult:
     muted = source_muted()
-    run(["pactl", "set-source-mute", SOURCE, "no" if muted else "yes"])
+    if muted is None:
+        # No reading: any new value would be invented, so nothing is written.
+        CACHE.invalidate("mute")
+        return control_outcome(False, False, "")
+    work_ok, detail = write_cmd(
+        ["pactl", "set-source-mute", SOURCE, "no" if muted else "yes"])
     CACHE.invalidate("mute")
-    return True, "unmuted" if muted else "MUTED"
+    return control_outcome(True, work_ok, "unmuted" if muted else "MUTED",
+                           detail)
 
 
 # ------------------------------------------------------------------------- actions
@@ -821,6 +953,8 @@ def interactive() -> int:
                 edge(row, left + frame_w - 1)
 
             # --- data -----------------------------------------------------
+            # The server answer comes first: without it nothing else is known (S4).
+            audio = audio_state(audio_probe())
             devices = adb_devices()
             pids = bridge_pids()
             state = bridge_unit_state()
@@ -883,47 +1017,60 @@ def interactive() -> int:
             draw_box(stdscr, top + mic_y, left_x, 6, mic_w, color=tone("border"))
 
             alive = bool(pids) and state == "active"
-            if muted:
-                status, dot = "MUTED", "warn"
-            elif alive:
-                status, dot = "ACTIVE", "ok"
-            else:
-                status, dot = fmt_value(state).upper(), "bad"
-            put(mic_y + 1, left_x + 2, "●", tone(dot))
+            # One decision from facts: a server that does not answer outranks the
+            # word, the gain and the volume the box would otherwise print (S4).
+            mic = mic_state(audio, muted, alive, state)
+            put(mic_y + 1, left_x + 2, "●", tone(mic.tone))
             put(mic_y + 1, left_x + 4, "Phone-Mic", curses.A_BOLD)
             put(mic_y + 1, left_x + 15, "PipeWire remap source", tone("dim"))
-            put(mic_y + 1, left_x + mic_w - 3 - len(status), status,
-                tone(dot) | curses.A_BOLD)
-            put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
-                + (f" · pid {pids[0]}" if pids else "") + f" · routing {routing_dot}",
-                tone("ok") if routing_ok else tone("bad"))
+            put(mic_y + 1, left_x + mic_w - 3 - len(mic.word), mic.word,
+                tone(mic.tone) | curses.A_BOLD)
+            if mic.cause:
+                # S4: the cause and the command that fixes it, in place of the
+                # controls, whose values cannot be read at all right now.
+                put(mic_y + 2, left_x + 2, mic.cause, tone("warn"))
+                put(mic_y + 3, left_x + 2, mic.fix, tone("dim"))
+                put(mic_y + 4, left_x + 2, mic_value_line(volume, stream_gain),
+                    tone("dim"))
+            else:
+                put(mic_y + 2, left_x + 2, f"service {fmt_value(state)}"
+                    + (f" · pid {pids[0]}" if pids else "")
+                    + f" · routing {routing_dot}",
+                    tone("ok") if routing_ok else tone("bad"))
 
-            def slider(row: int, label: str, value: int | None, selected: bool) -> None:
-                track_w = 16
-                if value is None:
-                    # No readable volume: leave the track blank rather than flag
-                    # a position nobody measured, and print a dash, not 0% (S2).
-                    track = " " * track_w
-                else:
-                    filled = int(round(track_w * value / 100))
-                    track = "━" * filled + "●" + "━" * (track_w - filled)
-                put(row, left_x + 2, f"{label:<8}",
-                    tone("accent") if selected else tone("dim"))
-                put(row, left_x + 11, track, tone("ok") if selected else tone("dim"))
-                put(row, left_x + 29, fmt_value(value, "3d", "%", 4), tone("plain"))
+                def slider(row: int, label: str, value: int | None,
+                           selected: bool) -> None:
+                    track_w = 16
+                    if value is None:
+                        # No readable volume: leave the track blank rather than flag
+                        # a position nobody measured, and print a dash, not 0% (S2).
+                        track = " " * track_w
+                    else:
+                        filled = int(round(track_w * value / 100))
+                        track = "━" * filled + "●" + "━" * (track_w - filled)
+                    put(row, left_x + 2, f"{label:<8}",
+                        tone("accent") if selected else tone("dim"))
+                    put(row, left_x + 11, track,
+                        tone("ok") if selected else tone("dim"))
+                    put(row, left_x + 29, fmt_value(value, "3d", "%", 4),
+                        tone("plain"))
 
-            slider(mic_y + 3, "GAIN", volume, focus == "gain")
-            slider(mic_y + 4, "VOLUME", stream_gain, focus == "volume")
+                slider(mic_y + 3, "GAIN", volume, focus == "gain")
+                slider(mic_y + 4, "VOLUME", stream_gain, focus == "volume")
 
             def nudge(delta: int) -> None:
                 """Step the focused control; unknown volume refuses instead of guessing."""
                 value = volume if focus == "gain" else stream_gain
                 if value is None:
+                    # S7: no reading, so no write and no claim of one either.
+                    say(control_outcome(False, False, "").message)
                     return
                 if focus == "gain":
-                    set_source_volume(value + delta)
+                    result = set_source_volume(value + delta)
                 else:
-                    set_stream_volume(value + delta)
+                    result = set_stream_volume(value + delta)
+                if not result.ok:
+                    say(result.message)
 
             # --- footer (rows 23..26) -------------------------------------
             frame_row(frame_h - 4, TEE_L, TEE_R)
@@ -1030,7 +1177,7 @@ def interactive() -> int:
             elif ch in (ord("x"), ord("X")):
                 say(stop_bridge()[1])
             elif ch in (ord("m"), ord("M")):
-                say(toggle_mute()[1])
+                say(toggle_mute().message)
             elif ch in (ord("a"), ord("A")):
                 say(fix_routing()[1])
             elif ch in (ord("t"), ord("T")):
@@ -1061,6 +1208,7 @@ def once() -> int:
     while meter.windows < 4 and time.monotonic() < deadline:
         time.sleep(0.1)
 
+    audio = audio_state(audio_probe())
     devices = adb_devices()
     pids = bridge_pids()
     state = bridge_unit_state()
@@ -1097,11 +1245,18 @@ def once() -> int:
     row("  VIRTUAL MICROPHONE")
     alive = bool(pids) and state == "active"
     routing = "ok" if bool(have) and bool(want) and have == want else "WRONG"
-    row(f"   ● Phone-Mic   {'ACTIVE' if alive else fmt_value(state).upper()}"
-        f"   routing {routing}")
-    row(f"     service {fmt_value(state)}" + (f" · pid {pids[0]}" if pids else ""))
-    row(f"   GAIN    {fmt_value(volume, '3d', '%', 4)}"
-        f"    VOLUME  {fmt_value(stream_gain, '3d', '%', 4)}"
+    # The same decision the panel takes, from the same helper (S4, S7).
+    mic = mic_state(audio, muted, alive, state)
+    # No routing claim either while the server is silent: unknown is not WRONG.
+    claim = f"   routing {routing}" if audio.up else ""
+    row(f"   ● Phone-Mic   {mic.word}{claim}")
+    if mic.cause:
+        row(f"     {mic.cause}")
+        row(f"     {mic.fix}")
+    else:
+        row(f"     service {fmt_value(state)}"
+            + (f" · pid {pids[0]}" if pids else ""))
+    row(f"   {mic_value_line(volume, stream_gain)}"
         f"    {'MUTED' if muted else ''}")
     row("")
     row("  [C] Connect  [X] Stop  [M] Mute  [D] Devices  [Q] Quit")
