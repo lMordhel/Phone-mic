@@ -42,6 +42,15 @@ S7. No fabricated success. A control that failed never reports success.
 S8. Behaviour is preserved: key bindings, themes, layout and the four existing
 `status` fields keep working; only state words and unreadable values change.
 
+S9. Choosing a theme must not be lost. Navigating the picker previews the theme,
+Enter applies and saves it, and `esc` or `t` cancels and restores the previously
+saved theme; the hint names the key that closes. Today `j`/`k` preview nothing and
+`t` closes without applying, so a choice disappears silently.
+
+S10. If PipeWire restarts while the bridge runs, the program recovers the virtual
+source and the audio stream without a manual restart, and never reports the
+pipeline as healthy while the source is absent.
+
 ## Tasks
 
 - P1 — Split failure from empty in the read layer: a query helper that reports
@@ -58,7 +67,8 @@ S8. Behaviour is preserved: key bindings, themes, layout and the four existing
   done, `ca7b635`. 11 of the new cases fail against the previous module.
 - P4 — Audio server and controls honesty: probe `pactl info`, show
   `AUDIO SERVER DOWN` with the fixing command, render gain/volume as `—` and
-  refuse to pretend a write succeeded. S2 S4 S7. worker. — in flight.
+  refuse to pretend a write succeeded. S2 S4 S7. worker. — done, `65b5297`.
+  27 of the new cases fail against the previous commit.
   `feat(tui): report audio server state honestly`
 - P5 — Phone link honesty: adb unavailable, unauthorized, offline, no device,
   unknown unit state, unknown model. S5. worker.
@@ -68,6 +78,12 @@ S8. Behaviour is preserved: key bindings, themes, layout and the four existing
   `refactor(tui): share state logic between panel and status`
 - P7 — Footer advertises every key the loop handles, including `[R]`, `Tab` and
   the arrows. S8. inline. `fix(tui): list every handled key in the footer`
+- P8 — Theme picker: preview while navigating, Enter applies and saves, `esc`/`t`
+  restores the saved theme, hint names the closing key. S9. inline.
+  `fix(tui): never lose a chosen theme`
+- P9 — Recover the virtual source and the audio stream when PipeWire restarts
+  under a running bridge, and stop claiming a healthy pipeline while the source
+  is absent. S10. worker. `fix(bridge): recover when PipeWire restarts`
 
 ## Log
 
@@ -94,8 +110,28 @@ L4 — scope boundary: this feature touches `tui/` only. The installer work (T2/
 of professional-distribution) is parked by L1 of that document.
 
 L5 — review policy for this feature, decided by the orchestrator and reported to
-the owner: the TUI slice is reviewed ONCE, when P1-P7 are committed and the tree
+the owner: the TUI slice is reviewed ONCE, when P1-P9 are committed and the tree
 is quiet, instead of once per task. Each intermediate task keeps the file in
 motion, so a per-task review would freeze a half-written panel and pay four times
 for the same file. Commits `8a8d046` (P1+P2) and `ca7b635` (P3) were committed
 with local verification and no native review.
+
+L6 — owner, verbatim: "el tema de la tui no es persistente , a tema elegido ,,
+cuando cierro el tui y lo vuelvo abrir se cambia de tema por defctoq eu tiene de
+coor negro con auzl"
+
+L7 — evidence for L6: the persistence itself works. A panel started with the
+screendump hook reports `theme pastel-peach` from `~/.config/phone-mic/tui.conf`,
+and `--theme dark-ocean` reports `dark-ocean`. The defect is the picker's cancel
+path, measured A/B on the owner's own config: opening with `t`, moving with `j`
+and closing with `t` leaves `theme=pastel-peach` untouched, while confirming with
+Enter writes `theme=light-paper`. `j`/`k` also preview nothing, so a choice can
+be navigated and then discarded without ever being applied.
+
+L8 — incident during P4 verification, and the evidence behind S10: PipeWire was
+restarted at 01:36:42 while the bridge had been running since 01:11:39. The
+runtime-loaded `phone_mic` source and the scrcpy stream disappeared with it,
+while the bridge process stayed alive, so `Restart=always` never fired and the
+panel reported `routing WRONG` over an audio pipeline that had no source at all.
+Restored with `scripts/load-virtual-mic.sh` plus a bridge restart; verified with a
+real capture (peak 2470/32767).
