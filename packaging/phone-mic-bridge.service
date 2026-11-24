@@ -15,6 +15,9 @@ Type=simple
 # pipewire-pulse implements it in-process. The script is idempotent, so this costs
 # nothing when the nodes already exist, and it makes a fresh boot work without a
 # manual step: the null sink comes from the configuration, the source comes here.
+# Failing this step is deliberate: running the bridge without the source would
+# forward audio into a sink nobody can capture from, and a silent microphone is
+# worse than a visible restart loop.
 ExecStartPre=%h/Proyectos/phone-mic/scripts/load-virtual-mic.sh
 # connect first, then forward: every restart reconnects adb (last known port,
 # then mDNS discovery) before resuming audio. Chained here so the bridge needs no

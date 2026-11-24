@@ -64,6 +64,12 @@ Check it:
 phone-mic status
 ```
 
+The packaging regressions are static: no root, no audio server, no phone needed.
+
+```bash
+packaging/tests/packaging-static.sh
+```
+
 ## Phone setup
 
 Done once. Nothing is installed on the phone.
